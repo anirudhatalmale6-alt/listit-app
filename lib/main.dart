@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'services/api_service.dart';
-import 'screens/home_screen.dart';
+import 'screens/main_shell.dart';
 import 'theme.dart';
 
 void main() {
@@ -32,7 +32,7 @@ class _ListitAppState extends State<ListitApp> {
       title: 'Listit',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      home: HomeScreen(api: _api),
+      home: MainShell(api: _api),
     );
   }
 }

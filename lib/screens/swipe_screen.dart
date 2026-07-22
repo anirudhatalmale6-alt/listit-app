@@ -18,7 +18,20 @@ class SwipeScreen extends StatefulWidget {
   final Category? category;
   final ApiService api;
 
-  const SwipeScreen({super.key, required this.api, this.category});
+  /// Extra search filters (keyword, price range, ...) merged into every page
+  /// request. Lets Browse feed the deck a keyword search or a category filter.
+  final Map<String, dynamic> filters;
+
+  /// Overrides the app-bar title (e.g. a keyword search shows the term).
+  final String? titleOverride;
+
+  const SwipeScreen({
+    super.key,
+    required this.api,
+    this.category,
+    this.filters = const {},
+    this.titleOverride,
+  });
 
   @override
   State<SwipeScreen> createState() => _SwipeScreenState();
@@ -41,7 +54,8 @@ class _SwipeScreenState extends State<SwipeScreen> {
   static const int _prefetchThreshold = 6;
 
   String get _slug => widget.category?.slug ?? 'all';
-  String get _title => widget.category?.name ?? 'Discover';
+  String get _title =>
+      widget.titleOverride ?? widget.category?.name ?? 'Discover';
 
   @override
   void initState() {
@@ -61,8 +75,8 @@ class _SwipeScreenState extends State<SwipeScreen> {
       _error = null;
     });
     try {
-      final res = await widget.api
-          .search(category: _slug, page: 1, limit: _pageSize);
+      final res = await widget.api.search(
+          category: _slug, page: 1, limit: _pageSize, filters: widget.filters);
       if (!mounted) return;
       setState(() {
         _ads
@@ -87,8 +101,8 @@ class _SwipeScreenState extends State<SwipeScreen> {
     _loadingMore = true;
     try {
       final next = _page + 1;
-      final res = await widget.api
-          .search(category: _slug, page: next, limit: _pageSize);
+      final res = await widget.api.search(
+          category: _slug, page: next, limit: _pageSize, filters: widget.filters);
       if (!mounted) return;
       setState(() {
         final existing = _ads.map((a) => a.id).toSet();
