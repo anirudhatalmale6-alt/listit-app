@@ -6,7 +6,7 @@
            fb_login_protocol_scheme = "fb" + the App ID  (e.g. fb1234567890)
            facebook_client_token  = Settings > Advanced > Client Token
          See FACEBOOK_LOGIN_SETUP.md in the project root. -->
-    <string name="facebook_app_id">REPLACE_WITH_FB_APP_ID</string>
-    <string name="fb_login_protocol_scheme">fbREPLACE_WITH_FB_APP_ID</string>
+    <string name="facebook_app_id">2216310622528938</string>
+    <string name="fb_login_protocol_scheme">fb2216310622528938</string>
     <string name="facebook_client_token">REPLACE_WITH_FB_CLIENT_TOKEN</string>
 </resources>
