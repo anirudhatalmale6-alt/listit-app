@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/app_user.dart';
 import '../models/category.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
@@ -260,56 +261,73 @@ class _BrandHeader extends StatelessWidget {
   final VoidCallback onLogin;
   const _BrandHeader({required this.auth, required this.onLogin});
 
+  /// A warm, time-of-day greeting - personalised with the user's first name
+  /// once they are signed in. Keeps the home screen feeling personal rather
+  /// than a wall of listings.
+  static String _greeting(AppUser? user) {
+    final h = DateTime.now().hour;
+    final String part;
+    final String emoji;
+    if (h < 12) {
+      part = 'Good morning';
+      emoji = '🌞';
+    } else if (h < 17) {
+      part = 'Good afternoon';
+      emoji = '🌤️';
+    } else {
+      part = 'Good evening';
+      emoji = '🌙';
+    }
+    if (user != null) {
+      final first = user.displayName.trim().split(RegExp(r'\s+')).first;
+      return '$part, $first $emoji';
+    }
+    return '$part $emoji';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 12, 4),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          RichText(
-            text: const TextSpan(
-              style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.5,
+          Row(
+            children: [
+              RichText(
+                text: const TextSpan(
+                  style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  ),
+                  children: [
+                    TextSpan(
+                        text: 'list', style: TextStyle(color: AppColors.ink)),
+                    TextSpan(
+                        text: 'it', style: TextStyle(color: AppColors.primary)),
+                  ],
+                ),
               ),
-              children: [
-                TextSpan(text: 'list', style: TextStyle(color: AppColors.ink)),
-                TextSpan(text: 'it', style: TextStyle(color: AppColors.primary)),
-              ],
-            ),
-          ),
-          const Spacer(),
-          ListenableBuilder(
-            listenable: auth,
-            builder: (context, _) {
-              if (!auth.isLoggedIn) {
-                return TextButton(
-                  onPressed: onLogin,
-                  child: const Text(
-                    'Log In',
-                    style: TextStyle(
-                      color: AppColors.ink,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                );
-              }
-              final u = auth.user!;
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Hi, ${u.displayName.split(' ').first}',
-                    style: const TextStyle(
-                      color: AppColors.slate,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
+              const Spacer(),
+              ListenableBuilder(
+                listenable: auth,
+                builder: (context, _) {
+                  if (!auth.isLoggedIn) {
+                    return TextButton(
+                      onPressed: onLogin,
+                      child: const Text(
+                        'Log In',
+                        style: TextStyle(
+                          color: AppColors.ink,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    );
+                  }
+                  final u = auth.user!;
+                  return Container(
                     width: 34,
                     height: 34,
                     decoration: const BoxDecoration(
@@ -323,10 +341,23 @@ class _BrandHeader extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                ],
-              );
-            },
+                  );
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ListenableBuilder(
+            listenable: auth,
+            builder: (context, _) => Text(
+              _greeting(auth.user),
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: AppColors.ink,
+                letterSpacing: -0.3,
+              ),
+            ),
           ),
         ],
       ),
