@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../models/app_user.dart';
 import '../models/category.dart';
+import '../models/weather.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/weather_service.dart';
 import '../theme.dart';
 import '../widgets/network_photo.dart';
 import 'auth/auth_screen.dart';
@@ -35,16 +37,30 @@ class _BrowseScreenState extends State<BrowseScreen> {
   late Future<List<Category>> _future;
   final TextEditingController _search = TextEditingController();
 
+  final WeatherService _weatherService = WeatherService();
+  Weather? _weather;
+
   @override
   void initState() {
     super.initState();
     _future = widget.api.fetchTopCategories();
+    _loadWeather();
   }
 
   @override
   void dispose() {
     _search.dispose();
+    _weatherService.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadWeather() async {
+    try {
+      final w = await _weatherService.fetchCurrent();
+      if (mounted) setState(() => _weather = w);
+    } catch (_) {
+      // Weather is a nice-to-have; if it fails we just hide the line.
+    }
   }
 
   void _reload() =>
@@ -92,7 +108,11 @@ class _BrowseScreenState extends State<BrowseScreen> {
           child: CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
-                child: _BrandHeader(auth: widget.auth, onLogin: _openAuth),
+                child: _BrandHeader(
+                  auth: widget.auth,
+                  weather: _weather,
+                  onLogin: _openAuth,
+                ),
               ),
               SliverToBoxAdapter(child: _searchBar()),
               SliverToBoxAdapter(child: _discoverBanner()),
@@ -258,8 +278,13 @@ class _BrowseScreenState extends State<BrowseScreen> {
 
 class _BrandHeader extends StatelessWidget {
   final AuthService auth;
+  final Weather? weather;
   final VoidCallback onLogin;
-  const _BrandHeader({required this.auth, required this.onLogin});
+  const _BrandHeader({
+    required this.auth,
+    required this.weather,
+    required this.onLogin,
+  });
 
   /// A warm, time-of-day greeting - personalised with the user's first name
   /// once they are signed in. Keeps the home screen feeling personal rather
@@ -359,9 +384,28 @@ class _BrandHeader extends StatelessWidget {
               ),
             ),
           ),
+          if (weather != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                _weatherLine(weather!),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  color: AppColors.slate,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
         ],
       ),
     );
+  }
+
+  static String _weatherLine(Weather w) {
+    final desc = w.description.isNotEmpty ? ' · ${w.description}' : '';
+    return '${w.emoji}  ${w.tempRounded}°C · ${w.place}$desc';
   }
 }
 
