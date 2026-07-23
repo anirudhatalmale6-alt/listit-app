@@ -28,8 +28,9 @@ class ApiConfig {
   static String adDetail(int id) => '$userBase/ads/$id';
   static const String similarAds = '$userBase/similar-ads';
 
-  // --- Phase 2 endpoints (auth-gated; wired but used later) ----------------
+  // --- Phase 2 endpoints (auth) --------------------------------------------
   static const String saveAd = '$userBase/save-ad';
+  static const String profile = '$userBase/profile';
   static const String login = '$authBase/login';
   static const String register = '$authBase/register';
   static const String socialLogin = '$authBase/social-login';

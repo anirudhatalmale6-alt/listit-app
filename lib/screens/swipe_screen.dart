@@ -4,9 +4,11 @@ import 'package:flutter_card_swiper/flutter_card_swiper.dart';
 import '../models/ad.dart';
 import '../models/category.dart';
 import '../services/api_service.dart';
+import '../services/auth_service.dart';
 import '../theme.dart';
 import '../widgets/swipe_card.dart';
 import 'ad_detail_screen.dart';
+import 'auth/auth_screen.dart';
 
 /// The Tinder-style discovery deck - the headline feature of the app. Swipe
 /// right to show interest, left to pass, up to save for later. Cards stream in
@@ -17,6 +19,7 @@ import 'ad_detail_screen.dart';
 class SwipeScreen extends StatefulWidget {
   final Category? category;
   final ApiService api;
+  final AuthService auth;
 
   /// Extra search filters (keyword, price range, ...) merged into every page
   /// request. Lets Browse feed the deck a keyword search or a category filter.
@@ -28,6 +31,7 @@ class SwipeScreen extends StatefulWidget {
   const SwipeScreen({
     super.key,
     required this.api,
+    required this.auth,
     this.category,
     this.filters = const {},
     this.titleOverride,
@@ -124,12 +128,55 @@ class _SwipeScreenState extends State<SwipeScreen> {
       _interested.add(ad);
       _toast('Interested in "${_shorten(ad.title)}"', AppColors.success);
     } else if (direction == CardSwiperDirection.top) {
-      _toast('Saved "${_shorten(ad.title)}"', AppColors.save);
+      _save(ad);
     }
     if (current != null && current >= _ads.length - _prefetchThreshold) {
       _loadMore();
     }
     return true;
+  }
+
+  /// Persist a save to the user's account. Signed-out users get a gentle
+  /// nudge to sign in rather than losing the action silently.
+  Future<void> _save(Ad ad) async {
+    final user = widget.auth.user;
+    if (user == null) {
+      _promptLogin();
+      return;
+    }
+    try {
+      await widget.api.saveAd(userId: user.id, adId: ad.id);
+      _toast('Saved "${_shorten(ad.title)}"', AppColors.save);
+    } on ApiException catch (e) {
+      _toast(e.message, AppColors.danger);
+    } catch (_) {
+      _toast('Could not save right now.', AppColors.danger);
+    }
+  }
+
+  void _promptLogin() {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('Sign in to save ads'),
+          backgroundColor: AppColors.ink,
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'SIGN IN',
+            textColor: Colors.white,
+            onPressed: () async {
+              final ok = await Navigator.of(context).push<bool>(
+                MaterialPageRoute(
+                  builder: (_) => AuthScreen(
+                      auth: widget.auth, reason: 'Sign in to save this ad'),
+                ),
+              );
+              if (ok == true) widget.auth.refreshProfile();
+            },
+          ),
+        ),
+      );
   }
 
   void _openDetail(Ad ad) {

@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../models/category.dart';
 import '../services/api_service.dart';
+import '../services/auth_service.dart';
 import '../theme.dart';
 import '../widgets/network_photo.dart';
+import 'auth/auth_screen.dart';
 import 'swipe_screen.dart';
 
 /// The Browse tab, modelled on DoneDeal's marketplace home: brand header, a
@@ -12,11 +14,17 @@ import 'swipe_screen.dart';
 /// drops you into its swipe deck.
 class BrowseScreen extends StatefulWidget {
   final ApiService api;
+  final AuthService auth;
 
   /// Jumps the shell to the Discover tab (the swipe deck for everything).
   final VoidCallback onDiscover;
 
-  const BrowseScreen({super.key, required this.api, required this.onDiscover});
+  const BrowseScreen({
+    super.key,
+    required this.api,
+    required this.auth,
+    required this.onDiscover,
+  });
 
   @override
   State<BrowseScreen> createState() => _BrowseScreenState();
@@ -44,9 +52,16 @@ class _BrowseScreenState extends State<BrowseScreen> {
   void _openCategory(Category c) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => SwipeScreen(api: widget.api, category: c),
+        builder: (_) => SwipeScreen(api: widget.api, auth: widget.auth, category: c),
       ),
     );
+  }
+
+  Future<void> _openAuth() async {
+    final ok = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => AuthScreen(auth: widget.auth)),
+    );
+    if (ok == true) widget.auth.refreshProfile();
   }
 
   void _submitSearch(String term) {
@@ -56,6 +71,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
       MaterialPageRoute(
         builder: (_) => SwipeScreen(
           api: widget.api,
+          auth: widget.auth,
           filters: {'keyword': q},
           titleOverride: '"$q"',
         ),
@@ -74,7 +90,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
           onRefresh: () async => _reload(),
           child: CustomScrollView(
             slivers: [
-              const SliverToBoxAdapter(child: _BrandHeader()),
+              SliverToBoxAdapter(
+                child: _BrandHeader(auth: widget.auth, onLogin: _openAuth),
+              ),
               SliverToBoxAdapter(child: _searchBar()),
               SliverToBoxAdapter(child: _discoverBanner()),
               SliverToBoxAdapter(child: _sectionLabel('Browse by category')),
@@ -238,12 +256,14 @@ class _BrowseScreenState extends State<BrowseScreen> {
 }
 
 class _BrandHeader extends StatelessWidget {
-  const _BrandHeader();
+  final AuthService auth;
+  final VoidCallback onLogin;
+  const _BrandHeader({required this.auth, required this.onLogin});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 4),
       child: Row(
         children: [
           RichText(
@@ -260,16 +280,53 @@ class _BrandHeader extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          TextButton(
-            onPressed: () {},
-            child: const Text(
-              'Log In',
-              style: TextStyle(
-                color: AppColors.ink,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+          ListenableBuilder(
+            listenable: auth,
+            builder: (context, _) {
+              if (!auth.isLoggedIn) {
+                return TextButton(
+                  onPressed: onLogin,
+                  child: const Text(
+                    'Log In',
+                    style: TextStyle(
+                      color: AppColors.ink,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                );
+              }
+              final u = auth.user!;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Hi, ${u.displayName.split(' ').first}',
+                    style: const TextStyle(
+                      color: AppColors.slate,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: const BoxDecoration(
+                        color: AppColors.primary, shape: BoxShape.circle),
+                    alignment: Alignment.center,
+                    child: Text(
+                      u.initials,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ],
       ),

@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
+import '../services/auth_service.dart';
 import '../theme.dart';
 import 'browse_screen.dart';
 import 'swipe_screen.dart';
 import 'placeholder_screen.dart';
+import 'profile_screen.dart';
 
 /// The app shell: a persistent bottom toolbar (DoneDeal-style) that keeps each
 /// tab's state alive via an IndexedStack. Discover - the swipe deck - sits
 /// right in the toolbar as its own destination, as Chris asked.
 class MainShell extends StatefulWidget {
   final ApiService api;
-  const MainShell({super.key, required this.api});
+  final AuthService auth;
+  const MainShell({super.key, required this.api, required this.auth});
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -21,8 +24,8 @@ class _MainShellState extends State<MainShell> {
   int _index = 0;
 
   late final List<Widget> _tabs = [
-    BrowseScreen(api: widget.api, onDiscover: () => _select(1)),
-    SwipeScreen(api: widget.api), // Discover
+    BrowseScreen(api: widget.api, auth: widget.auth, onDiscover: () => _select(1)),
+    SwipeScreen(api: widget.api, auth: widget.auth), // Discover
     const PlaceholderScreen(
       icon: Icons.add_circle_outline,
       title: 'Place an ad',
@@ -35,12 +38,7 @@ class _MainShellState extends State<MainShell> {
       message:
           'Chat with buyers and sellers, make and accept offers.\nArrives in the next phase alongside accounts.',
     ),
-    const PlaceholderScreen(
-      icon: Icons.person_outline_rounded,
-      title: 'My profile',
-      message:
-          'Your listings, saved items, ratings and verification.\nArrives in the next phase alongside accounts.',
-    ),
+    ProfileScreen(api: widget.api, auth: widget.auth),
   ];
 
   void _select(int i) => setState(() => _index = i);
