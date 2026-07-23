@@ -55,6 +55,14 @@ class AuthService extends ChangeNotifier {
     await _apply(res);
   }
 
+  /// Sign in with a Facebook access token obtained on the device. The server
+  /// verifies it and returns a normal Listit session, so from here it behaves
+  /// exactly like [login]/[register].
+  Future<void> loginWithFacebook(String accessToken) async {
+    final res = await _api!.facebookLogin(accessToken: accessToken);
+    await _apply(res);
+  }
+
   /// Pull the freshest profile for the signed-in user (ratings, avatar, ...).
   Future<void> refreshProfile() async {
     if (!isLoggedIn) return;

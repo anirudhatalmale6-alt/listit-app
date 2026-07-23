@@ -66,5 +66,28 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- Facebook Login. Replace REPLACE_WITH_FB_APP_ID / client token with the
+	     values from developers.facebook.com > Settings > Basic. The URL scheme
+	     is "fb" + App ID. See FACEBOOK_LOGIN_SETUP.md. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>fbREPLACE_WITH_FB_APP_ID</string>
+			</array>
+		</dict>
+	</array>
+	<key>FacebookAppID</key>
+	<string>REPLACE_WITH_FB_APP_ID</string>
+	<key>FacebookClientToken</key>
+	<string>REPLACE_WITH_FB_CLIENT_TOKEN</string>
+	<key>FacebookDisplayName</key>
+	<string>ListIt</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>fbapi</string>
+		<string>fb-messenger-share-api</string>
+	</array>
 </dict>
 </plist>

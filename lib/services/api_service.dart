@@ -171,6 +171,20 @@ class ApiService {
     return _authResult(_unwrap(res));
   }
 
+  /// Exchange a Facebook user access token for a Listit session. The server
+  /// verifies the token with Facebook and returns our own JWT + user, so the
+  /// response shape matches [login]/[register].
+  Future<AuthResult> facebookLogin({required String accessToken}) async {
+    final res = await _client
+        .post(
+          Uri.parse(ApiConfig.facebookLogin),
+          headers: _headers,
+          body: jsonEncode({'access_token': accessToken}),
+        )
+        .timeout(_timeout);
+    return _authResult(_unwrap(res));
+  }
+
   /// The signed-in user's own profile (auth required).
   Future<AppUser> fetchProfile() async {
     final res =

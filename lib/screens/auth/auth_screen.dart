@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
@@ -59,6 +60,31 @@ class _AuthScreenState extends State<AuthScreen> {
       _snack(e.message);
     } catch (_) {
       _snack('Something went wrong. Please try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _facebook() async {
+    setState(() => _busy = true);
+    try {
+      final result = await FacebookAuth.instance
+          .login(permissions: const ['public_profile', 'email']);
+      if (result.status == LoginStatus.success && result.accessToken != null) {
+        await widget.auth.loginWithFacebook(result.accessToken!.tokenString);
+        if (!mounted) return;
+        Navigator.of(context).pop(true);
+      } else if (result.status == LoginStatus.cancelled) {
+        // User backed out - not an error, just do nothing.
+      } else {
+        _snack((result.message ?? '').isNotEmpty
+            ? result.message!
+            : 'Facebook sign-in failed. Please try again.');
+      }
+    } on ApiException catch (e) {
+      _snack(e.message);
+    } catch (_) {
+      _snack("Facebook sign-in isn't available right now.");
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -182,6 +208,40 @@ class _AuthScreenState extends State<AuthScreen> {
                             style: const TextStyle(
                                 fontSize: 16, fontWeight: FontWeight.w700),
                           ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: const [
+                    Expanded(child: Divider(color: AppColors.line)),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      child: Text('or',
+                          style: TextStyle(color: AppColors.muted, fontSize: 13)),
+                    ),
+                    Expanded(child: Divider(color: AppColors.line)),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  height: 52,
+                  child: OutlinedButton.icon(
+                    onPressed: _busy ? null : _facebook,
+                    icon: const Icon(Icons.facebook, color: Color(0xFF1877F2)),
+                    label: const Text(
+                      'Continue with Facebook',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.line),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 18),

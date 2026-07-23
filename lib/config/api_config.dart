@@ -34,6 +34,7 @@ class ApiConfig {
   static const String login = '$authBase/login';
   static const String register = '$authBase/register';
   static const String socialLogin = '$authBase/social-login';
+  static const String facebookLogin = '$authBase/facebook';
 
   /// Resolve a stored image path to a fully-qualified URL. Absolute URLs
   /// (Cloudinary, https://...) are returned untouched.
