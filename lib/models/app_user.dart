@@ -14,6 +14,10 @@ class AppUser {
   final String? location;
   final double rating;
   final int reviews;
+  final bool emailVerified;
+  final bool phoneVerified;
+  final String? flag; // dialling code stored server-side ("44")
+  final String? countryCode; // ISO country ("IM" / "GB")
 
   const AppUser({
     required this.id,
@@ -26,9 +30,14 @@ class AppUser {
     this.location,
     this.rating = 0,
     this.reviews = 0,
+    this.emailVerified = false,
+    this.phoneVerified = false,
+    this.flag,
+    this.countryCode,
   });
 
   bool get isDealer => vendorType == 'dealer';
+  bool get fullyVerified => emailVerified && phoneVerified;
   String get displayName =>
       (businessName != null && businessName!.trim().isNotEmpty)
           ? businessName!.trim()
@@ -46,6 +55,34 @@ class AppUser {
       v is num ? v.toInt() : int.tryParse('${v ?? ''}') ?? 0;
   static double _asDouble(dynamic v) =>
       v is num ? v.toDouble() : double.tryParse('${v ?? ''}') ?? 0;
+  static bool _asBool(dynamic v) =>
+      v == true || v == 1 || v == '1' || v == 'true';
+
+  /// A copy with fields overridden — used after an in-app verification so the
+  /// cached user reflects the new status without a full profile refetch.
+  AppUser copyWith({
+    bool? emailVerified,
+    bool? phoneVerified,
+    String? phone,
+    String? flag,
+    String? countryCode,
+  }) =>
+      AppUser(
+        id: id,
+        name: name,
+        email: email,
+        avatar: avatar,
+        vendorType: vendorType,
+        businessName: businessName,
+        phone: phone ?? this.phone,
+        location: location,
+        rating: rating,
+        reviews: reviews,
+        emailVerified: emailVerified ?? this.emailVerified,
+        phoneVerified: phoneVerified ?? this.phoneVerified,
+        flag: flag ?? this.flag,
+        countryCode: countryCode ?? this.countryCode,
+      );
 
   factory AppUser.fromJson(Map<String, dynamic> j) {
     final logo = (j['logo'] ?? '').toString();
@@ -68,6 +105,12 @@ class AppUser {
           : j['location'].toString(),
       rating: _asDouble(j['average_rating']),
       reviews: _asInt(j['total_reviews']),
+      emailVerified: _asBool(j['email_verified']),
+      phoneVerified: _asBool(j['otp_verified']),
+      flag: (j['flag'] ?? '').toString().isEmpty ? null : j['flag'].toString(),
+      countryCode: (j['country_code'] ?? '').toString().isEmpty
+          ? null
+          : j['country_code'].toString(),
     );
   }
 
@@ -82,5 +125,9 @@ class AppUser {
         'location': location,
         'average_rating': rating,
         'total_reviews': reviews,
+        'email_verified': emailVerified ? 1 : 0,
+        'otp_verified': phoneVerified ? 1 : 0,
+        'flag': flag,
+        'country_code': countryCode,
       };
 }

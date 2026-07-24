@@ -36,6 +36,14 @@ class ApiConfig {
   static const String socialLogin = '$authBase/social-login';
   static const String facebookLogin = '$authBase/facebook';
 
+  // --- Verification (email + phone OTP) ------------------------------------
+  static const String sendOtp = '$authBase/resend-otp';
+  static const String verifyOtp = '$authBase/verify-user';
+
+  // Reveal a dealer's main contact number (no login required).
+  static const String dealerPhone = '$userBase/dealer-phone';
+  static const String sellerPhone = '$userBase/seller-phone';
+
   // --- Selling (place an ad) -----------------------------------------------
   static const String createAd = '$userBase/ads';
   static const String plans = '$userBase/plan';

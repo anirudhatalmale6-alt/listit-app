@@ -4,12 +4,15 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/category.dart';
+import '../../models/country.dart';
 import '../../models/plan.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../theme.dart';
+import '../../widgets/flag_badge.dart';
 import '../../widgets/network_photo.dart';
 import '../auth/auth_screen.dart';
+import '../auth/verify_screen.dart';
 
 /// The Sell tab. Gates on a signed-in session, then runs the multi-step
 /// "place an ad" wizard (DoneDeal-style): category -> details -> photos ->
@@ -140,6 +143,7 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
   final List<_Photo> _photos = [];
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
+  PhoneCountry _country = kDefaultCountry;
   String? _location;
   bool _allowCall = true;
   bool _allowMessage = true;
@@ -155,6 +159,7 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
     final u = widget.auth.user;
     _nameCtrl.text = u?.name ?? '';
     _phoneCtrl.text = u?.phone ?? '';
+    _country = countryFor(iso: u?.countryCode, dial: u?.flag);
     _location = (u?.location != null && _imTowns.contains(u!.location)) ? u.location : null;
     _load();
   }
@@ -306,9 +311,9 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
       'full_name': _nameCtrl.text.trim(),
       'email': u.email,
       'phone': _phoneCtrl.text.trim(),
-      'country_code': 'IM',
-      'phone_code': '44',
-      'country': 'Isle of Man',
+      'country_code': _country.iso,
+      'phone_code': _country.dial,
+      'country': _country.name,
       'location': _location,
       'allow_contact': contact.join(','),
       'plan_id': _plan?.id ?? 11,
@@ -350,17 +355,40 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
         title: Text(verifyGate ? 'Verify your account first' : "Couldn't publish"),
         content: Text(verifyGate
             ? 'To keep List it safe, you need a verified email and phone number '
-                'before your first ad goes live.\n\nYou can verify from the website '
-                'now — I can add in-app verification next if you\'d like.'
+                'before your first ad goes live. It only takes a minute.'
             : message),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
+            child: Text(verifyGate ? 'Later' : 'OK'),
           ),
+          if (verifyGate)
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _openVerify();
+              },
+              child: const Text('Verify now'),
+            ),
         ],
       ),
     );
+  }
+
+  Future<void> _openVerify() async {
+    final ok = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => VerifyScreen(
+          auth: widget.auth,
+          api: widget.api,
+          reason: 'to publish your ad',
+        ),
+      ),
+    );
+    // If they finished verifying, drop them straight back onto Publish.
+    if (ok == true && mounted && (widget.auth.user?.fullyVerified ?? false)) {
+      _toast('Verified — tap Publish to go live');
+    }
   }
 
   void _showSuccess(int? adId) {
@@ -807,10 +835,22 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
         TextField(controller: _nameCtrl, decoration: _dec('Name buyers will see')),
         const SizedBox(height: 14),
         _label('Contact number'),
-        TextField(
-          controller: _phoneCtrl,
-          keyboardType: TextInputType.phone,
-          decoration: _dec('e.g. 07624 123456'),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _countryPicker(),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: _phoneCtrl,
+                keyboardType: TextInputType.phone,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]')),
+                ],
+                decoration: _dec(_country.hint),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 14),
         _label('Location'),
@@ -931,6 +971,63 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
         padding: const EdgeInsets.only(bottom: 6),
         child: Text(t, style: const TextStyle(fontWeight: FontWeight.w700)),
       );
+
+  /// Flag + dial-code button that opens the country sheet. Isle of Man and the
+  /// UK both dial +44, so the flag is how the seller (and buyers) tell them
+  /// apart.
+  Widget _countryPicker() => InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: _pickCountry,
+        child: Container(
+          height: 54,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            border: Border.all(color: AppColors.line),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              FlagBadge(iso: _country.iso),
+              const SizedBox(width: 6),
+              Text('+${_country.dial}',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, color: AppColors.ink)),
+              const Icon(Icons.arrow_drop_down, color: AppColors.slate),
+            ],
+          ),
+        ),
+      );
+
+  Future<void> _pickCountry() async {
+    final picked = await showModalBottomSheet<PhoneCountry>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Country',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+              ),
+            ),
+            for (final c in kPhoneCountries)
+              ListTile(
+                leading: FlagBadge(iso: c.iso, width: 30, height: 21),
+                title: Text(c.name),
+                trailing: Text('+${c.dial}',
+                    style: const TextStyle(color: AppColors.slate)),
+                onTap: () => Navigator.of(context).pop(c),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked != null) setState(() => _country = picked);
+  }
 
   InputDecoration _dec(String hint) => InputDecoration(
         hintText: hint,

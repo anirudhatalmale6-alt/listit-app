@@ -5,6 +5,7 @@ import '../services/auth_service.dart';
 import '../theme.dart';
 import '../widgets/network_photo.dart';
 import 'auth/auth_screen.dart';
+import 'auth/verify_screen.dart';
 import 'saved_ads_screen.dart';
 
 /// The Profile tab. Reacts to the auth session: a friendly sign-in prompt when
@@ -133,6 +134,8 @@ class ProfileScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
+        _verifyTile(context, u.fullyVerified, u.emailVerified, u.phoneVerified),
+        const SizedBox(height: 12),
         _tile(
           icon: Icons.bookmark_border_rounded,
           label: 'Saved ads',
@@ -162,6 +165,38 @@ class ProfileScreen extends StatelessWidget {
           onTap: () => auth.logout(),
         ),
       ],
+    );
+  }
+
+  Future<void> _openVerify(BuildContext context) async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => VerifyScreen(auth: auth, api: api)),
+    );
+  }
+
+  /// Account verification status + shortcut. Green and reassuring when done;
+  /// a gentle amber nudge with what's still outstanding when not.
+  Widget _verifyTile(
+      BuildContext context, bool done, bool email, bool phone) {
+    final color = done ? AppColors.success : AppColors.save;
+    final subtitle = done
+        ? 'Email and phone verified'
+        : 'Verify ${!email && !phone ? 'email & phone' : !email ? 'your email' : 'your phone'} to post ads';
+    return Container(
+      color: Colors.white,
+      child: ListTile(
+        leading: Icon(
+            done ? Icons.verified_rounded : Icons.gpp_maybe_outlined,
+            color: color),
+        title: Text(done ? 'Account verified' : 'Verify your account',
+            style: const TextStyle(
+                fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.ink)),
+        subtitle: Text(subtitle,
+            style: const TextStyle(fontSize: 12.5, color: AppColors.slate)),
+        trailing: const Icon(Icons.arrow_forward_ios,
+            size: 15, color: AppColors.muted),
+        onTap: () => _openVerify(context),
+      ),
     );
   }
 

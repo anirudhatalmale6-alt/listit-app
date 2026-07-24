@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/ad.dart';
 import '../services/api_service.dart';
 import '../theme.dart';
 import '../utils/format.dart';
+import '../utils/phone.dart';
 import '../widgets/network_photo.dart';
 
 /// Full listing view. Opened from a tap on a swipe card. Loads the richer
@@ -205,6 +207,10 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
           ),
           const SizedBox(height: 20),
           _sellerRow(ad),
+          if (ad.isDealer) ...[
+            const SizedBox(height: 12),
+            DealerContact(api: widget.api, userId: ad.userId),
+          ],
           const Divider(height: 40),
           const Text(
             'Description',
@@ -362,5 +368,113 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first[0].toUpperCase();
     return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
+}
+
+/// Dealer / business-seller contact, mirroring the website's on-ad buttons:
+/// Call (reveals then dials) and WhatsApp, both sourced from the dealer's main
+/// number so they're always complete. Numbers are normalised through the same
+/// rules as the site (see utils/phone.dart) before dialling.
+class DealerContact extends StatefulWidget {
+  final ApiService api;
+  final int userId;
+  const DealerContact({super.key, required this.api, required this.userId});
+
+  @override
+  State<DealerContact> createState() => _DealerContactState();
+}
+
+class _DealerContactState extends State<DealerContact> {
+  Map<String, String>? _data; // {number, flag}
+  bool _revealed = false;
+  int _busy = 0; // 0 idle, 1 call, 2 whatsapp
+
+  Future<Map<String, String>?> _fetch() async {
+    if (_data != null) return _data;
+    final d = await widget.api.revealDealerPhone(widget.userId);
+    if (d != null && mounted) setState(() => _data = d);
+    return d;
+  }
+
+  Future<void> _call() async {
+    if (_revealed && _data != null) {
+      await _launch(Uri.parse('tel:${toIntlPhone(_data!['number'], _data!['flag'])}'));
+      return;
+    }
+    setState(() => _busy = 1);
+    final d = await _fetch();
+    if (!mounted) return;
+    setState(() {
+      _busy = 0;
+      if (d != null) _revealed = true;
+    });
+    if (d == null) _oops();
+  }
+
+  Future<void> _whatsapp() async {
+    setState(() => _busy = 2);
+    final d = await _fetch();
+    if (!mounted) return;
+    setState(() => _busy = 0);
+    if (d == null) {
+      _oops();
+      return;
+    }
+    await _launch(Uri.parse('https://wa.me/${toWaNumber(d['number'], d['flag'])}'));
+  }
+
+  Future<void> _launch(Uri uri) async {
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      _oops();
+    }
+  }
+
+  void _oops() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('No contact number on file.')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final revealedNumber =
+        _revealed && _data != null ? toIntlPhone(_data!['number'], _data!['flag']) : null;
+    return Row(
+      children: [
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: _busy != 0 ? null : _call,
+            icon: _busy == 1
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.phone, size: 19),
+            label: Text(revealedNumber ?? 'Show number',
+                overflow: TextOverflow.ellipsis),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: _busy != 0 ? null : _whatsapp,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF25D366),
+              foregroundColor: Colors.white,
+            ),
+            icon: _busy == 2
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.chat, size: 19),
+            label: const Text('WhatsApp'),
+          ),
+        ),
+      ],
+    );
   }
 }

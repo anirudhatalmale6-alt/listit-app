@@ -76,6 +76,27 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Reflect a just-completed verification locally so the UI (and the ad-post
+  /// gate) updates immediately, without waiting on a profile refetch.
+  Future<void> markVerified({
+    bool? email,
+    bool? phone,
+    String? number,
+    String? flag,
+    String? countryCode,
+  }) async {
+    if (_user == null) return;
+    _user = _user!.copyWith(
+      emailVerified: email,
+      phoneVerified: phone,
+      phone: number,
+      flag: flag,
+      countryCode: countryCode,
+    );
+    await _persist();
+    notifyListeners();
+  }
+
   Future<void> logout() async {
     _token = null;
     _user = null;

@@ -187,6 +187,72 @@ class ApiService {
     return _authResult(_unwrap(res));
   }
 
+  // --- Verification --------------------------------------------------------
+
+  /// Send (or resend) a verification code. [type] 1 = email, 2 = phone. For
+  /// phone the seller's chosen [number]/[flag]/[countryCode] ride along so the
+  /// server stores them and texts the code there.
+  Future<void> sendVerificationCode({
+    required int type,
+    required int userId,
+    String? number,
+    String? flag,
+    String? countryCode,
+  }) async {
+    final body = <String, dynamic>{'type': type, 'user_id': userId};
+    if (type == 2) {
+      body['number'] = number;
+      body['flag'] = flag;
+      body['country_code'] = countryCode;
+    }
+    final res = await _client
+        .post(Uri.parse(ApiConfig.sendOtp),
+            headers: _headers, body: jsonEncode(body))
+        .timeout(_timeout);
+    _unwrap(res);
+  }
+
+  /// Confirm the 6-digit code. [type] 1 = email, 2 = phone.
+  Future<void> verifyCode({
+    required int type,
+    required String otp,
+    required int userId,
+    String? number,
+    String? flag,
+    String? countryCode,
+  }) async {
+    final body = <String, dynamic>{
+      'type': type,
+      'otp': otp,
+      'user_id': userId,
+    };
+    if (type == 2) {
+      body['number'] = number;
+      body['flag'] = flag;
+      body['country_code'] = countryCode;
+    }
+    final res = await _client
+        .post(Uri.parse(ApiConfig.verifyOtp),
+            headers: _headers, body: jsonEncode(body))
+        .timeout(_timeout);
+    _unwrap(res);
+  }
+
+  /// Reveal a dealer's main contact number, e.g. `{number, flag}`. Returns null
+  /// if the backend has nothing on file.
+  Future<Map<String, String>?> revealDealerPhone(int userId) async {
+    final res = await _client
+        .post(Uri.parse(ApiConfig.dealerPhone),
+            headers: _headers, body: jsonEncode({'user_id': userId}))
+        .timeout(_timeout);
+    final data = _unwrap(res);
+    final info = data['user_info'];
+    if (info is! Map) return null;
+    final number = (info['number'] ?? '').toString();
+    if (number.isEmpty) return null;
+    return {'number': number, 'flag': (info['flag'] ?? '44').toString()};
+  }
+
   /// The signed-in user's own profile (auth required).
   Future<AppUser> fetchProfile() async {
     final res =

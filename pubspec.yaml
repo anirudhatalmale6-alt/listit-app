@@ -42,7 +42,6 @@ dependencies:
   url_launcher: ^6.3.1
   flutter_facebook_auth: ^7.1.1
   image_picker: ^1.1.2
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -79,6 +78,7 @@ flutter:
   assets:
     - assets/listit_logo.png
     - assets/listit_mark.png
+    - assets/flags/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
