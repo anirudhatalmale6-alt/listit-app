@@ -144,6 +144,7 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   PhoneCountry _country = kDefaultCountry;
+  bool _flagLocked = false; // true once the user picks a country by hand
   String? _location;
   bool _allowCall = true;
   bool _allowMessage = true;
@@ -847,6 +848,13 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
                 inputFormatters: [
                   FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]')),
                 ],
+                onChanged: (v) {
+                  if (_flagLocked || _country.dial == '353') return;
+                  final c = detectUkOrManx(v);
+                  if (c != null && c.iso != _country.iso) {
+                    setState(() => _country = c);
+                  }
+                },
                 decoration: _dec(_country.hint),
               ),
             ),
@@ -1026,7 +1034,12 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
         ),
       ),
     );
-    if (picked != null) setState(() => _country = picked);
+    if (picked != null) {
+      setState(() {
+        _country = picked;
+        _flagLocked = true;
+      });
+    }
   }
 
   InputDecoration _dec(String hint) => InputDecoration(

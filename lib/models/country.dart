@@ -30,6 +30,28 @@ const List<PhoneCountry> kPhoneCountries = [
 const PhoneCountry kDefaultCountry =
     PhoneCountry(iso: 'IM', dial: '44', name: 'Isle of Man', hint: '07624 123456');
 
+/// Detect Isle of Man vs UK straight from what the user typed, per the Manx
+/// numbering rule: ONLY +441624 (01624 landline) and +447624 (07624 mobile)
+/// are Isle of Man — every other +44 number is UK. Returns null while there
+/// still aren't enough digits to decide, or when the number looks non-+44
+/// (e.g. an Ireland +353 number), so the caller keeps the current selection.
+PhoneCountry? detectUkOrManx(String raw) {
+  var d = raw.replaceAll(RegExp(r'\D'), '');
+  if (d.isEmpty) return null;
+  // Peel any international / trunk prefix down to the national number.
+  if (d.startsWith('0044')) {
+    d = d.substring(4);
+  } else if (d.startsWith('44')) {
+    d = d.substring(2);
+  } else if (d.startsWith('353')) {
+    return null; // an Ireland number — leave the flag as the user set it
+  }
+  if (d.startsWith('0')) d = d.substring(1);
+  if (d.length < 4) return null; // not enough to tell an area code yet
+  if (d.startsWith('1624') || d.startsWith('7624')) return kDefaultCountry; // IoM
+  return kPhoneCountries[1]; // United Kingdom
+}
+
 /// Best-effort match of a stored (country_code, dial) back to one of our
 /// options so an existing number pre-selects the right flag. Falls back to the
 /// Isle of Man.

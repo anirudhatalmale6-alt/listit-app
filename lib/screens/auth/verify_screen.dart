@@ -37,6 +37,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
   // Phone
   _Stage _phone = _Stage.idle;
   PhoneCountry _country = kDefaultCountry;
+  bool _flagLocked = false; // true once the user picks a country by hand
   final _phoneCtrl = TextEditingController();
   final _phoneOtp = TextEditingController();
   bool _phoneBusy = false;
@@ -109,6 +110,14 @@ class _VerifyScreenState extends State<VerifyScreen> {
   }
 
   // --- Phone ---------------------------------------------------------------
+
+  /// Auto-pick the flag from the number as it's typed — 1624/7624 = Isle of
+  /// Man, any other +44 = UK — unless the user has chosen a country by hand.
+  void _onPhoneChanged(String v) {
+    if (_flagLocked || _country.dial == '353') return;
+    final c = detectUkOrManx(v);
+    if (c != null && c.iso != _country.iso) setState(() => _country = c);
+  }
 
   /// National significant number (digits only, no trunk 0) to store as `number`.
   String _nsn() {
@@ -324,6 +333,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                     inputFormatters: [
                       FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]')),
                     ],
+                    onChanged: _onPhoneChanged,
                     decoration: _dec(_country.hint),
                   ),
                 ),
@@ -419,7 +429,12 @@ class _VerifyScreenState extends State<VerifyScreen> {
         ),
       ),
     );
-    if (picked != null) setState(() => _country = picked);
+    if (picked != null) {
+      setState(() {
+        _country = picked;
+        _flagLocked = true; // respect the manual choice from here on
+      });
+    }
   }
 
   // --- Small shared bits ---------------------------------------------------
