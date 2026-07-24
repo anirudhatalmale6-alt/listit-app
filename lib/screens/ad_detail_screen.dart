@@ -315,26 +315,30 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (emailV) _badgeRow('Email verified', null),
-          if (phoneV) _badgeRow('Phone verified', iso),
+          if (phoneV) _badgeRow('Phone verified', iso: iso),
+          if (emailV) _badgeRow('Email verified', tick: true),
         ],
       ),
     );
   }
 
-  Widget _badgeRow(String label, String? iso) => Padding(
+  // Label on the left, the marker on the right so the flag (phone) and tick
+  // (email) line up down the right edge.
+  Widget _badgeRow(String label, {String? iso, bool tick = false}) => Padding(
         padding: const EdgeInsets.only(bottom: 3),
-        child: Row(
-          children: [
-            const Icon(Icons.check, size: 16, color: AppColors.success),
-            const SizedBox(width: 6),
-            Text(label,
-                style: const TextStyle(fontSize: 12.5, color: AppColors.slate)),
-            if (iso != null) ...[
-              const SizedBox(width: 7),
-              FlagBadge(iso: iso, width: 20, height: 14),
+        child: SizedBox(
+          width: 178,
+          child: Row(
+            children: [
+              Text(label,
+                  style:
+                      const TextStyle(fontSize: 12.5, color: AppColors.slate)),
+              const Spacer(),
+              if (iso != null) FlagBadge(iso: iso, width: 20, height: 14),
+              if (tick)
+                const Icon(Icons.check, size: 16, color: AppColors.success),
             ],
-          ],
+          ),
         ),
       );
 
