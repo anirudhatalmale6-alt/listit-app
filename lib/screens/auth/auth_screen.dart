@@ -277,19 +277,11 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Widget _logo() {
-    return RichText(
-      textAlign: TextAlign.center,
-      text: const TextSpan(
-        style: TextStyle(
-          fontSize: 32,
-          fontWeight: FontWeight.w800,
-          letterSpacing: -0.5,
-        ),
-        children: [
-          TextSpan(text: 'list', style: TextStyle(color: AppColors.ink)),
-          TextSpan(text: 'it', style: TextStyle(color: AppColors.primary)),
-        ],
-      ),
+    return Image.asset(
+      'assets/listit_logo.png',
+      height: 46,
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.high,
     );
   }
 

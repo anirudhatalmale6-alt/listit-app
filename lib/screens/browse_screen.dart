@@ -11,6 +11,17 @@ import '../widgets/network_photo.dart';
 import 'auth/auth_screen.dart';
 import 'swipe_screen.dart';
 
+/// 2679 -> "2,679". Keeps the home screen numbers reading cleanly.
+String _grouped(int n) {
+  final s = n.toString();
+  final buf = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+    buf.write(s[i]);
+  }
+  return buf.toString();
+}
+
 /// The Browse tab, modelled on DoneDeal's marketplace home: brand header, a
 /// search bar, a prominent Discover call-to-action, then every marketplace
 /// section as a thumbnail list with live listing counts. Tapping a section
@@ -128,29 +139,41 @@ class _BrowseScreenState extends State<BrowseScreen> {
 
   Widget _searchBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: TextField(
-        controller: _search,
-        textInputAction: TextInputAction.search,
-        onSubmitted: _submitSearch,
-        decoration: InputDecoration(
-          hintText: 'Search Listit',
-          hintStyle: const TextStyle(color: AppColors.muted),
-          prefixIcon: const Icon(Icons.search, color: AppColors.slate),
-          filled: true,
-          fillColor: AppColors.surface,
-          contentPadding: const EdgeInsets.symmetric(vertical: 0),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: AppColors.line),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: AppColors.line),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0F1B2430),
+              blurRadius: 12,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: TextField(
+          controller: _search,
+          textInputAction: TextInputAction.search,
+          onSubmitted: _submitSearch,
+          decoration: InputDecoration(
+            hintText: 'Search Listit',
+            hintStyle: const TextStyle(color: AppColors.muted),
+            prefixIcon: const Icon(Icons.search, color: AppColors.slate),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(vertical: 0),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: AppColors.line),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: AppColors.line),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+            ),
           ),
         ),
       ),
@@ -319,36 +342,34 @@ class _BrandHeader extends StatelessWidget {
         children: [
           Row(
             children: [
-              RichText(
-                text: const TextSpan(
-                  style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
-                  ),
-                  children: [
-                    TextSpan(
-                        text: 'list', style: TextStyle(color: AppColors.ink)),
-                    TextSpan(
-                        text: 'it', style: TextStyle(color: AppColors.primary)),
-                  ],
-                ),
+              Image.asset(
+                'assets/listit_logo.png',
+                height: 30,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
               ),
               const Spacer(),
               ListenableBuilder(
                 listenable: auth,
                 builder: (context, _) {
                   if (!auth.isLoggedIn) {
-                    return TextButton(
+                    return OutlinedButton(
                       onPressed: onLogin,
-                      child: const Text(
-                        'Log In',
-                        style: TextStyle(
-                          color: AppColors.ink,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        side: const BorderSide(color: AppColors.primary, width: 1.4),
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24),
                         ),
+                        textStyle: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        minimumSize: const Size(0, 0),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
+                      child: const Text('Log in'),
                     );
                   }
                   final u = auth.user!;
@@ -422,44 +443,54 @@ class _CategoryRow extends StatelessWidget {
         decoration: const BoxDecoration(
           border: Border(bottom: BorderSide(color: AppColors.line)),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
         child: Row(
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.line),
+              ),
+              clipBehavior: Clip.antiAlias,
+              padding: const EdgeInsets.all(6),
               child: NetworkPhoto(
                 url: category.imageUrl,
-                width: 48,
-                height: 48,
+                fit: BoxFit.contain,
               ),
             ),
             const SizedBox(width: 14),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    category.name,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.ink,
-                    ),
-                  ),
-                  if (category.adCount > 0)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(
-                        '${category.adCount} listings',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: AppColors.slate,
-                        ),
-                      ),
-                    ),
-                ],
+              child: Text(
+                category.name,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.ink,
+                  letterSpacing: -0.2,
+                ),
               ),
             ),
+            if (category.adCount > 0)
+              Container(
+                margin: const EdgeInsets.only(right: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEAF3FF),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _grouped(category.adCount),
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ),
             const Icon(Icons.arrow_forward_ios,
                 size: 15, color: AppColors.muted),
           ],
