@@ -1,3 +1,5 @@
+import '../utils/phone.dart';
+
 /// A phone country the seller can pick when entering a contact number.
 ///
 /// [iso] is the ISO-3166 alpha-2 the backend stores as `country_code`
@@ -50,6 +52,17 @@ PhoneCountry? detectUkOrManx(String raw) {
   if (d.length < 4) return null; // not enough to tell an area code yet
   if (d.startsWith('1624') || d.startsWith('7624')) return kDefaultCountry; // IoM
   return kPhoneCountries[1]; // United Kingdom
+}
+
+/// ISO-2 flag code for a stored number (for a FlagBadge), per the Manx rule:
+/// only 441624 / 447624 are Isle of Man; any other +44 is UK. Falls back to the
+/// stored country_code, then Isle of Man.
+String phoneFlagIso(dynamic number, dynamic flag, [String? countryCode]) {
+  final d = normPhoneDigits(number, flag);
+  if (d.startsWith('441624') || d.startsWith('447624')) return 'im';
+  if (d.startsWith('44')) return 'gb';
+  final cc = (countryCode ?? '').trim().toLowerCase();
+  return cc.isNotEmpty ? cc : 'im';
 }
 
 /// Best-effort match of a stored (country_code, dial) back to one of our

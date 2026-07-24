@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/ad.dart';
+import '../models/country.dart';
 import '../services/api_service.dart';
 import '../theme.dart';
 import '../utils/format.dart';
 import '../utils/phone.dart';
+import '../widgets/flag_badge.dart';
 import '../widgets/network_photo.dart';
 
 /// Full listing view. Opened from a tap on a swipe card. Loads the richer
@@ -284,6 +286,7 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
                     color: AppColors.slate,
                   ),
                 ),
+                _verifiedBadges(ad),
               ],
             ),
           ),
@@ -293,6 +296,47 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
       ),
     );
   }
+
+  static bool _truthy(dynamic v) =>
+      v == true || v == 1 || v == '1' || v == 'true';
+
+  /// DoneDeal-style trust badges: green tick for a verified email and phone,
+  /// with the UK / Isle of Man flag beside the phone (Manx rule: 1624/7624 =
+  /// IoM, any other +44 = UK). Sourced from the ad's userDetails.
+  Widget _verifiedBadges(Ad ad) {
+    final u = ad.raw['userDetails'];
+    if (u is! Map) return const SizedBox.shrink();
+    final emailV = _truthy(u['email_verified']);
+    final phoneV = _truthy(u['otp_verified']);
+    if (!emailV && !phoneV) return const SizedBox.shrink();
+    final iso = phoneFlagIso(u['number'], u['flag'], (u['country_code'] ?? '').toString());
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (emailV) _badgeRow('Email verified', null),
+          if (phoneV) _badgeRow('Phone verified', iso),
+        ],
+      ),
+    );
+  }
+
+  Widget _badgeRow(String label, String? iso) => Padding(
+        padding: const EdgeInsets.only(bottom: 3),
+        child: Row(
+          children: [
+            const Icon(Icons.check, size: 16, color: AppColors.success),
+            const SizedBox(width: 6),
+            Text(label,
+                style: const TextStyle(fontSize: 12.5, color: AppColors.slate)),
+            if (iso != null) ...[
+              const SizedBox(width: 7),
+              FlagBadge(iso: iso, width: 20, height: 14),
+            ],
+          ],
+        ),
+      );
 
   Widget _stat(IconData icon, String label) {
     return Row(
