@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 import '../models/ad.dart';
 import '../models/app_user.dart';
 import '../models/category.dart';
+import '../models/plan.dart';
 
 /// Result of a search page - the ads plus the total so the UI can show
 /// "718 in Cars & Motors" and know when to stop paginating.
@@ -224,6 +226,81 @@ class ApiService {
         .whereType<Map<String, dynamic>>()
         .map(Ad.fromJson)
         .toList();
+  }
+
+  // --- Selling (place an ad) -----------------------------------------------
+
+  /// The whole category tree as a flat list (top-level + every child), so the
+  /// Sell flow can drill down section -> subsection until it reaches a leaf.
+  Future<List<Category>> fetchAllCategories() async {
+    final res = await _client
+        .get(Uri.parse(ApiConfig.categories))
+        .timeout(_timeout);
+    final data = _unwrap(res);
+    return (data['result'] as List? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .map(Category.fromJson)
+        .where((c) => c.name.isNotEmpty)
+        .toList();
+  }
+
+  /// Listing plans available to the signed-in user (Lite is the free tier).
+  Future<List<Plan>> fetchPlans() async {
+    final res = await _client
+        .get(Uri.parse(ApiConfig.plans), headers: _headers)
+        .timeout(_timeout);
+    final data = _unwrap(res);
+    return (data['result'] as List? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .map(Plan.fromJson)
+        .toList();
+  }
+
+  /// Upload one photo to Cloudinary via the backend and return its hosted URL.
+  /// Mirrors the website's dealer form: multipart field `image`, URL comes back
+  /// in `data.file.path`.
+  Future<String> uploadPhoto(File file) async {
+    final req = http.MultipartFile.fromBytes(
+      'image',
+      await file.readAsBytes(),
+      filename: file.path.split('/').last,
+    );
+    final request = http.MultipartRequest('POST', Uri.parse(ApiConfig.uploadImage))
+      ..files.add(req);
+    final token = _getToken?.call();
+    if (token != null && token.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+    final streamed = await _client.send(request).timeout(_timeout);
+    final res = await http.Response.fromStream(streamed);
+    // This endpoint returns { error } on failure rather than the envelope, so
+    // surface that message directly if present.
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      String msg = 'Photo upload failed (${res.statusCode}).';
+      try {
+        final b = jsonDecode(res.body);
+        if (b is Map && b['error'] != null) msg = b['error'].toString();
+      } catch (_) {}
+      throw ApiException(msg);
+    }
+    final data = _unwrap(res);
+    final file0 = data['file'];
+    final url = file0 is Map ? (file0['path'] ?? file0['filename'] ?? '') : '';
+    if (url.toString().isEmpty) throw ApiException('Photo upload failed.');
+    return url.toString();
+  }
+
+  /// Publish a new ad. [payload] is the full body the backend expects (built by
+  /// the Sell flow). Returns the raw data map (contains the new ad id).
+  Future<Map<String, dynamic>> createAd(Map<String, dynamic> payload) async {
+    final res = await _client
+        .post(
+          Uri.parse(ApiConfig.createAd),
+          headers: _headers,
+          body: jsonEncode(payload),
+        )
+        .timeout(_timeout);
+    return _unwrap(res);
   }
 
   void dispose() => _client.close();

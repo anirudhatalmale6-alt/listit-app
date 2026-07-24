@@ -7,6 +7,7 @@ import 'browse_screen.dart';
 import 'swipe_screen.dart';
 import 'placeholder_screen.dart';
 import 'profile_screen.dart';
+import 'sell/sell_flow_screen.dart';
 
 /// The app shell: a persistent bottom toolbar (DoneDeal-style) that keeps each
 /// tab's state alive via an IndexedStack. Discover - the swipe deck - sits
@@ -26,12 +27,7 @@ class _MainShellState extends State<MainShell> {
   late final List<Widget> _tabs = [
     BrowseScreen(api: widget.api, auth: widget.auth, onDiscover: () => _select(1)),
     SwipeScreen(api: widget.api, auth: widget.auth), // Discover
-    const PlaceholderScreen(
-      icon: Icons.add_circle_outline,
-      title: 'Place an ad',
-      message:
-          'Quick-list in under two minutes - snap a photo, set a price, done.\nArrives in the next phase.',
-    ),
+    SellFlowScreen(api: widget.api, auth: widget.auth),
     const PlaceholderScreen(
       icon: Icons.chat_bubble_outline_rounded,
       title: 'Messages',

@@ -36,6 +36,11 @@ class ApiConfig {
   static const String socialLogin = '$authBase/social-login';
   static const String facebookLogin = '$authBase/facebook';
 
+  // --- Selling (place an ad) -----------------------------------------------
+  static const String createAd = '$userBase/ads';
+  static const String plans = '$userBase/plan';
+  static const String uploadImage = '$host/api/upload-image-cloudinary';
+
   /// Resolve a stored image path to a fully-qualified URL. Absolute URLs
   /// (Cloudinary, https://...) are returned untouched.
   static String resolveImage(String? path) {
