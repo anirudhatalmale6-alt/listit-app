@@ -336,7 +336,12 @@ class _AdDetailScreenState extends State<AdDetailScreen> {
               const Spacer(),
               if (iso != null) FlagBadge(iso: iso, width: 20, height: 14),
               if (tick)
-                const Icon(Icons.check, size: 16, color: AppColors.success),
+                const Text('✓',
+                    style: TextStyle(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                        height: 1)),
             ],
           ),
         ),
