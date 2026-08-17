@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
+import '../../config/api_config.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../theme.dart';
@@ -90,6 +92,35 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  Future<void> _google() async {
+    setState(() => _busy = true);
+    try {
+      final gsi = GoogleSignIn(
+        serverClientId: ApiConfig.googleServerClientId,
+        scopes: const ['email', 'profile'],
+      );
+      // Sign out first so the account picker always appears (no silent reuse).
+      await gsi.signOut();
+      final account = await gsi.signIn();
+      if (account == null) return; // user backed out
+      final tokens = await account.authentication;
+      final idToken = tokens.idToken;
+      if (idToken == null || idToken.isEmpty) {
+        _snack('Google sign-in failed. Please try again.');
+        return;
+      }
+      await widget.auth.loginWithGoogle(idToken);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } on ApiException catch (e) {
+      _snack(e.message);
+    } catch (_) {
+      _snack("Google sign-in isn't available right now.");
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   void _snack(String msg) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -124,7 +155,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 22,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.ink,
                   ),
                 ),
@@ -137,6 +168,32 @@ class _AuthScreenState extends State<AuthScreen> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: AppColors.slate, fontSize: 14),
                 ),
+                if (widget.auth.sessionExpired) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF7ED),
+                      borderRadius: BorderRadius.circular(AppRadius.control),
+                      border: Border.all(color: const Color(0xFFFED7AA)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.info_outline,
+                            size: 18, color: Color(0xFFB45309)),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Your session expired — please sign in again.',
+                            style: TextStyle(
+                                color: Color(0xFFB45309), fontSize: 13),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 28),
                 if (_register) ...[
                   _field(
@@ -193,7 +250,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(AppRadius.control),
                       ),
                     ),
                     child: _busy
@@ -239,7 +296,36 @@ class _AuthScreenState extends State<AuthScreen> {
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: AppColors.line),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(AppRadius.control),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 52,
+                  child: OutlinedButton.icon(
+                    onPressed: _busy ? null : _google,
+                    icon: const Text(
+                      'G',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF4285F4),
+                      ),
+                    ),
+                    label: const Text(
+                      'Continue with Google',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.line),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.control),
                       ),
                     ),
                   ),
@@ -259,7 +345,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           ? null
                           : () => setState(() => _register = !_register),
                       child: Text(
-                        _register ? 'Sign in' : 'Create one',
+                        _register ? 'Sign in' : 'Sign up',
                         style: const TextStyle(
                           color: AppColors.primary,
                           fontWeight: FontWeight.w700,
@@ -306,15 +392,15 @@ class _AuthScreenState extends State<AuthScreen> {
         filled: true,
         fillColor: AppColors.surface,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppRadius.control),
           borderSide: const BorderSide(color: AppColors.line),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppRadius.control),
           borderSide: const BorderSide(color: AppColors.line),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppRadius.control),
           borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
         ),
       ),

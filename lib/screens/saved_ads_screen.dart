@@ -107,10 +107,10 @@ class _SavedCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(AppRadius.control),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppRadius.control),
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Row(
@@ -139,7 +139,7 @@ class _SavedCard extends StatelessWidget {
                       Format.price(ad),
                       style: const TextStyle(
                           fontSize: 16,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w700,
                           color: AppColors.primary),
                     ),
                     if (ad.location.isNotEmpty) ...[

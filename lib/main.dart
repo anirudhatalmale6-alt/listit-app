@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
 import 'services/api_service.dart';
+import 'services/app_settings.dart';
 import 'services/auth_service.dart';
-import 'screens/main_shell.dart';
+import 'services/site_settings.dart';
+import 'screens/splash_screen.dart';
 import 'theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  AppSettings.load(); // best-effort; picker reads the current value live
   runApp(const ListitApp());
 }
 
@@ -22,13 +25,17 @@ class _ListitAppState extends State<ListitApp> {
   // reads the current token through a closure so it can attach the auth header
   // without owning session state. One of each lives for the app's lifetime.
   final AuthService _auth = AuthService();
-  late final ApiService _api = ApiService(getToken: () => _auth.token);
+  late final ApiService _api = ApiService(
+    getToken: () => _auth.token,
+    onUnauthorized: () => _auth.handleExpiredSession(),
+  );
 
   @override
   void initState() {
     super.initState();
     _auth.bind(_api);
     _auth.restore(); // best-effort restore of a persisted session
+    SiteSettings.load(_api); // best-effort; social links + banner mirror the site
   }
 
   @override
@@ -44,7 +51,7 @@ class _ListitAppState extends State<ListitApp> {
       title: 'Listit',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      home: MainShell(api: _api, auth: _auth),
+      home: SplashScreen(api: _api, auth: _auth),
     );
   }
 }

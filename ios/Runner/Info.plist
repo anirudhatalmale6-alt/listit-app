@@ -89,5 +89,9 @@
 		<string>fbapi</string>
 		<string>fb-messenger-share-api</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Listit needs access to your camera so you can take photos of items you're listing for sale.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Listit needs access to your photo library so you can add photos to your ads.</string>
 </dict>
 </plist>

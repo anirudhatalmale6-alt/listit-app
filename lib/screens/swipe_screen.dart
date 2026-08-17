@@ -54,16 +54,22 @@ class _SwipeScreenState extends State<SwipeScreen> {
   bool _exhausted = false;
   String? _error;
 
+  // The section the deck is narrowed to (null = everything). Lets the user
+  // filter Discover so it isn't showing random stuff.
+  Category? _selected;
+  List<Category> _cats = const [];
+
   static const int _pageSize = 20;
   static const int _prefetchThreshold = 6;
 
-  String get _slug => widget.category?.slug ?? 'all';
   String get _title =>
-      widget.titleOverride ?? widget.category?.name ?? 'Discover';
+      widget.titleOverride ??
+      (_selected == null ? 'Discover' : _sectionLabel(_selected!.name));
 
   @override
   void initState() {
     super.initState();
+    _selected = widget.category;
     _loadFirstPage();
   }
 
@@ -80,7 +86,11 @@ class _SwipeScreenState extends State<SwipeScreen> {
     });
     try {
       final res = await widget.api.search(
-          category: _slug, page: 1, limit: _pageSize, filters: widget.filters);
+          categoryId: _selected?.id,
+          isVehicle: _selected?.isVehicle ?? false,
+          page: 1,
+          limit: _pageSize,
+          filters: widget.filters);
       if (!mounted) return;
       setState(() {
         _ads
@@ -106,7 +116,11 @@ class _SwipeScreenState extends State<SwipeScreen> {
     try {
       final next = _page + 1;
       final res = await widget.api.search(
-          category: _slug, page: next, limit: _pageSize, filters: widget.filters);
+          categoryId: _selected?.id,
+          isVehicle: _selected?.isVehicle ?? false,
+          page: next,
+          limit: _pageSize,
+          filters: widget.filters);
       if (!mounted) return;
       setState(() {
         final existing = _ads.map((a) => a.id).toSet();
@@ -182,9 +196,34 @@ class _SwipeScreenState extends State<SwipeScreen> {
   void _openDetail(Ad ad) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => AdDetailScreen(adId: ad.id, api: widget.api, preview: ad),
+        builder: (_) => AdDetailScreen(
+            adId: ad.id, api: widget.api, preview: ad, auth: widget.auth),
       ),
     );
+  }
+
+  /// Let the user narrow Discover to one section so the deck isn't random.
+  Future<void> _openFilter() async {
+    if (_cats.isEmpty) {
+      try {
+        _cats = await widget.api.fetchTopCategories();
+      } catch (_) {/* show just "Everything" if the list can't load */}
+    }
+    if (!mounted) return;
+    // Returns a Category for a section, the string 'ALL' for Everything, or
+    // null if dismissed with no change.
+    final picked = await showModalBottomSheet<Object?>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      isScrollControlled: true,
+      builder: (_) => _SectionPicker(cats: _cats, selectedId: _selected?.id),
+    );
+    if (picked == null) return;
+    setState(() => _selected = picked is Category ? picked : null);
+    _loadFirstPage();
   }
 
   void _toast(String message, Color color) {
@@ -210,19 +249,47 @@ class _SwipeScreenState extends State<SwipeScreen> {
         title: Text(_title),
         actions: [
           if (_total > 0)
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Center(
-                child: Text(
-                  '$_total listings',
-                  style: const TextStyle(
-                    color: AppColors.slate,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
+            Center(
+              child: Text(
+                '$_total listings',
+                style: const TextStyle(
+                  color: AppColors.slate,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
+          // Reset brings the whole deck back from the start, in case you
+          // swiped past something and change your mind.
+          IconButton(
+            tooltip: 'Reset',
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: _loading ? null : _loadFirstPage,
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 4, left: 4),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                IconButton(
+                  tooltip: 'Filter',
+                  icon: const Icon(Icons.tune_rounded),
+                  onPressed: _openFilter,
+                ),
+                if (_selected != null)
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: Container(
+                      width: 9,
+                      height: 9,
+                      decoration: const BoxDecoration(
+                          color: AppColors.primary, shape: BoxShape.circle),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
       body: SafeArea(child: _body()),
@@ -339,7 +406,7 @@ class _SwipeScreenState extends State<SwipeScreen> {
   }) {
     return Material(
       color: Colors.white,
-      elevation: 3,
+      elevation: 0,
       shadowColor: Colors.black26,
       shape: const CircleBorder(),
       child: InkWell(
@@ -380,6 +447,68 @@ class _ErrorState extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The Cars & Motors section is shown as "Motor Mall" in the app.
+String _sectionLabel(String name) =>
+    name == 'Cars & Motors' ? 'Motor Mall' : name;
+
+/// A bottom sheet to pick which section Discover swipes through (or Everything).
+class _SectionPicker extends StatelessWidget {
+  final List<Category> cats;
+  final int? selectedId;
+  const _SectionPicker({required this.cats, required this.selectedId});
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.7,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (context, controller) {
+        return Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Show me',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView(
+                controller: controller,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.all_inclusive_rounded,
+                        color: AppColors.primary),
+                    title: const Text('Everything',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+                    trailing: selectedId == null
+                        ? const Icon(Icons.check, color: AppColors.primary)
+                        : null,
+                    onTap: () => Navigator.of(context).pop('ALL'),
+                  ),
+                  for (final c in cats)
+                    ListTile(
+                      title: Text(_sectionLabel(c.name)),
+                      trailing: selectedId == c.id
+                          ? const Icon(Icons.check, color: AppColors.primary)
+                          : null,
+                      onTap: () => Navigator.of(context).pop(c),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

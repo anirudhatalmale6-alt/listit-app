@@ -5,13 +5,13 @@ import '../services/auth_service.dart';
 import '../theme.dart';
 import 'browse_screen.dart';
 import 'swipe_screen.dart';
-import 'placeholder_screen.dart';
+import 'messages_screen.dart';
 import 'profile_screen.dart';
 import 'sell/sell_flow_screen.dart';
 
 /// The app shell: a persistent bottom toolbar (DoneDeal-style) that keeps each
 /// tab's state alive via an IndexedStack. Discover - the swipe deck - sits
-/// right in the toolbar as its own destination, as Chris asked.
+/// right in the toolbar as its own destination.
 class MainShell extends StatefulWidget {
   final ApiService api;
   final AuthService auth;
@@ -28,12 +28,7 @@ class _MainShellState extends State<MainShell> {
     BrowseScreen(api: widget.api, auth: widget.auth, onDiscover: () => _select(1)),
     SwipeScreen(api: widget.api, auth: widget.auth), // Discover
     SellFlowScreen(api: widget.api, auth: widget.auth),
-    const PlaceholderScreen(
-      icon: Icons.chat_bubble_outline_rounded,
-      title: 'Messages',
-      message:
-          'Chat with buyers and sellers, make and accept offers.\nArrives in the next phase alongside accounts.',
-    ),
+    MessagesScreen(api: widget.api, auth: widget.auth),
     ProfileScreen(api: widget.api, auth: widget.auth),
   ];
 
@@ -41,9 +36,17 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(index: _index, children: _tabs),
-      bottomNavigationBar: _BottomBar(index: _index, onTap: _select),
+    // Back on any tab other than Browse returns to Browse instead of dropping
+    // out of the app - so pressing back from Discover doesn't close Listit.
+    return PopScope(
+      canPop: _index == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _select(0);
+      },
+      child: Scaffold(
+        body: IndexedStack(index: _index, children: _tabs),
+        bottomNavigationBar: _BottomBar(index: _index, onTap: _select),
+      ),
     );
   }
 }
@@ -59,7 +62,7 @@ class _BottomBar extends StatelessWidget {
   static const _items = <_NavItem>[
     _NavItem('Browse', Icons.search),
     _NavItem('Discover', Icons.style_rounded),
-    _NavItem('Sell', Icons.local_offer_outlined),
+    _NavItem('New Ad', Icons.add, raised: true),
     _NavItem('Messages', Icons.chat_bubble_outline_rounded),
     _NavItem('Profile', Icons.person_outline_rounded),
   ];
@@ -67,16 +70,16 @@ class _BottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      // Flat navy with a hairline on top instead of a drop shadow - the bar
+      // should sit under the page, not hover over it.
       decoration: const BoxDecoration(
         color: AppColors.ink,
-        boxShadow: [
-          BoxShadow(color: Color(0x22000000), blurRadius: 8, offset: Offset(0, -2)),
-        ],
+        border: Border(top: BorderSide(color: Color(0xFF2C3846))),
       ),
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 62,
+          height: 58,
           child: Row(
             children: [
               for (var i = 0; i < _items.length; i++)
@@ -108,19 +111,49 @@ class _BottomBarButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = active ? Colors.white : const Color(0xFF97A2AE);
+    // The "New Ad" action gets a raised blue circle with a + so it reads as the
+    // primary call-to-action, DoneDeal-style.
+    if (item.raised) {
+      return InkWell(
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: const BoxDecoration(
+                color: AppColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.add, color: Colors.white, size: 21),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              item.label,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return InkWell(
       onTap: onTap,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(item.icon, color: color, size: 24),
+          Icon(item.icon, color: color, size: 22),
           const SizedBox(height: 3),
           Text(
             item.label,
             style: TextStyle(
               color: color,
-              fontSize: 12,
-              fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+              fontSize: 11,
+              fontWeight: active ? FontWeight.w600 : FontWeight.w500,
             ),
           ),
         ],
@@ -132,5 +165,6 @@ class _BottomBarButton extends StatelessWidget {
 class _NavItem {
   final String label;
   final IconData icon;
-  const _NavItem(this.label, this.icon);
+  final bool raised;
+  const _NavItem(this.label, this.icon, {this.raised = false});
 }

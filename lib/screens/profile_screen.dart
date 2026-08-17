@@ -1,12 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/api_service.dart';
+import '../services/app_settings.dart';
 import '../services/auth_service.dart';
 import '../theme.dart';
 import '../widgets/network_photo.dart';
 import 'auth/auth_screen.dart';
 import 'auth/verify_screen.dart';
+import 'edit_profile_screen.dart';
+import 'messages_screen.dart';
+import 'my_listings_screen.dart';
+import 'recently_viewed_screen.dart';
 import 'saved_ads_screen.dart';
+import 'saved_searches_screen.dart';
+import 'settings_screens.dart';
+import 'social_media_screen.dart';
 
 /// The Profile tab. Reacts to the auth session: a friendly sign-in prompt when
 /// signed out, and the account (avatar, saved ads, log out) once signed in.
@@ -76,16 +85,97 @@ class ProfileScreen extends StatelessWidget {
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(AppRadius.control)),
                 ),
                 child: const Text('Sign in or create account',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               ),
             ),
+            const SizedBox(height: 28),
+            _handednessTile(),
+            const SizedBox(height: 20),
+            const _VersionLabel(),
           ],
         ),
       ),
     );
+  }
+
+  /// Handedness: moves tick boxes / controls to the left (right-hand use) or
+  /// right (left-hand use) for easier one-handed reach. A device setting, so
+  /// it's available signed in or out.
+  Widget _handednessTile() {
+    return Container(
+      color: Colors.white,
+      child: ValueListenableBuilder<bool>(
+        valueListenable: AppSettings.leftHanded,
+        builder: (context, left, _) => SwitchListTile(
+          secondary: const Icon(Icons.back_hand_outlined, color: AppColors.slate),
+          activeThumbColor: AppColors.primary,
+          title: const Text('Left-hand mode',
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.ink)),
+          subtitle: const Text(
+              'Moves the tick boxes to the left, nearer your left thumb',
+              style: TextStyle(fontSize: 12.5, color: AppColors.slate)),
+          value: left,
+          onChanged: (v) => AppSettings.setLeftHanded(v),
+        ),
+      ),
+    );
+  }
+
+  /// The DoneDeal-style "settings & support" block: notifications, consent,
+  /// help, support, legal and data requests. Links open the matching pages on
+  /// the website; notifications and consent are on-device preference screens.
+  List<Widget> _settingsTiles(BuildContext context) {
+    return [
+      _tile(
+        icon: Icons.notifications_none_rounded,
+        label: 'Notifications',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+        ),
+      ),
+      _tile(
+        icon: Icons.privacy_tip_outlined,
+        label: 'Consent options',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ConsentScreen()),
+        ),
+      ),
+      _tile(
+        icon: Icons.public_rounded,
+        label: 'Social media',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const SocialMediaScreen()),
+        ),
+      ),
+      _tile(
+        icon: Icons.gavel_rounded,
+        label: 'Legal policies',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const LegalPoliciesScreen()),
+        ),
+      ),
+      _tile(
+        icon: Icons.download_outlined,
+        label: 'Data requests',
+        onTap: () => ListitLinks.open(ListitLinks.dataRequest),
+      ),
+      _tile(
+        icon: Icons.help_outline_rounded,
+        label: 'Help',
+        onTap: () => ListitLinks.open(ListitLinks.help),
+      ),
+      _tile(
+        icon: Icons.support_agent_rounded,
+        label: 'Customer support',
+        onTap: () => ListitLinks.open(ListitLinks.contact),
+      ),
+    ];
   }
 
   Widget _signedIn(BuildContext context) {
@@ -107,7 +197,7 @@ class ProfileScreen extends StatelessWidget {
                       u.displayName,
                       style: const TextStyle(
                           fontSize: 19,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w700,
                           color: AppColors.ink),
                     ),
                     const SizedBox(height: 2),
@@ -137,6 +227,18 @@ class ProfileScreen extends StatelessWidget {
         _verifyTile(context, u.fullyVerified, u.emailVerified, u.phoneVerified),
         const SizedBox(height: 12),
         _tile(
+          icon: Icons.edit_outlined,
+          label: 'Edit profile',
+          onTap: () async {
+            final ok = await Navigator.of(context).push<bool>(
+              MaterialPageRoute(
+                builder: (_) => EditProfileScreen(auth: auth, api: api),
+              ),
+            );
+            if (ok == true) auth.refreshProfile();
+          },
+        ),
+        _tile(
           icon: Icons.bookmark_border_rounded,
           label: 'Saved ads',
           onTap: () => Navigator.of(context).push(
@@ -146,17 +248,45 @@ class ProfileScreen extends StatelessWidget {
           ),
         ),
         _tile(
+          icon: Icons.bookmark_border_rounded,
+          label: 'Saved searches',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => SavedSearchesScreen(api: api, auth: auth),
+            ),
+          ),
+        ),
+        _tile(
+          icon: Icons.history_rounded,
+          label: 'Recently viewed',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => RecentlyViewedScreen(api: api),
+            ),
+          ),
+        ),
+        _tile(
           icon: Icons.local_offer_outlined,
           label: 'My listings',
-          trailing: 'Coming soon',
-          onTap: null,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => MyListingsScreen(api: api, auth: auth),
+            ),
+          ),
         ),
         _tile(
           icon: Icons.chat_bubble_outline_rounded,
           label: 'Messages',
-          trailing: 'Coming soon',
-          onTap: null,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => MessagesScreen(api: api, auth: auth),
+            ),
+          ),
         ),
+        const SizedBox(height: 12),
+        _handednessTile(),
+        const SizedBox(height: 12),
+        ..._settingsTiles(context),
         const SizedBox(height: 12),
         _tile(
           icon: Icons.logout_rounded,
@@ -164,6 +294,9 @@ class ProfileScreen extends StatelessWidget {
           danger: true,
           onTap: () => auth.logout(),
         ),
+        const SizedBox(height: 16),
+        const Center(child: _VersionLabel()),
+        const SizedBox(height: 24),
       ],
     );
   }
@@ -245,5 +378,33 @@ class ProfileScreen extends StatelessWidget {
         onTap: onTap,
       ),
     );
+  }
+}
+
+/// Shows the installed app version (read from the build), so it's easy to
+/// confirm you're on the latest.
+class _VersionLabel extends StatefulWidget {
+  const _VersionLabel();
+
+  @override
+  State<_VersionLabel> createState() => _VersionLabelState();
+}
+
+class _VersionLabelState extends State<_VersionLabel> {
+  String _version = '';
+
+  @override
+  void initState() {
+    super.initState();
+    PackageInfo.fromPlatform().then((info) {
+      if (mounted) setState(() => _version = info.version);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_version.isEmpty) return const SizedBox(height: 16);
+    return Text('Listit v$_version',
+        style: const TextStyle(color: AppColors.muted, fontSize: 12.5));
   }
 }

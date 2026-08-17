@@ -23,7 +23,7 @@ class SwipeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(AppRadius.card),
       child: Container(
         color: AppColors.surface,
         child: Stack(
@@ -56,9 +56,8 @@ class SwipeCard extends StatelessWidget {
 
   Widget _topBadges() {
     final badges = <Widget>[];
-    if (ad.isDealer) {
-      badges.add(_pill('Dealer', AppColors.primary));
-    }
+    // Seller-type badge (Agent/Trade) removed from the photo at the client's
+    // request - only status flags remain.
     if (ad.underOffer) {
       badges.add(_pill('Under offer', AppColors.save));
     }
@@ -76,20 +75,29 @@ class SwipeCard extends StatelessWidget {
     );
   }
 
-  Widget _pill(String text, Color color) {
+  Widget _pill(String text, Color color, {IconData? icon}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: color,
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Text(
-        text,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 13, color: Colors.white),
+            const SizedBox(width: 5),
+          ],
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -113,7 +121,7 @@ class SwipeCard extends StatelessWidget {
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 30,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               if (old != null) ...[
@@ -199,7 +207,7 @@ class SwipeCard extends StatelessWidget {
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
                   border: Border.all(color: spec.color, width: 4),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(AppRadius.control),
                 ),
                 child: Text(
                   spec.label,

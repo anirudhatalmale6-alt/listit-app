@@ -38,7 +38,14 @@ class AuthService extends ChangeNotifier {
         _user = null;
       }
     }
-    if (_token != null && _user != null) notifyListeners();
+    if (_token != null && _user != null) {
+      notifyListeners();
+      // Validate the restored token straight away: a 401 here means it expired
+      // while the app was closed, so refreshProfile clears the session (via the
+      // 401 handler) and the user is asked to sign in again on launch rather
+      // than hitting silent failures later.
+      await refreshProfile();
+    }
   }
 
   Future<void> register({
@@ -60,6 +67,11 @@ class AuthService extends ChangeNotifier {
   /// exactly like [login]/[register].
   Future<void> loginWithFacebook(String accessToken) async {
     final res = await _api!.facebookLogin(accessToken: accessToken);
+    await _apply(res);
+  }
+
+  Future<void> loginWithGoogle(String idToken) async {
+    final res = await _api!.googleLogin(idToken: idToken);
     await _apply(res);
   }
 
@@ -106,9 +118,25 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// True right after a session expired out from under the user, so screens can
+  /// explain "please sign in again" rather than silently showing a login form.
+  bool _sessionExpired = false;
+  bool get sessionExpired => _sessionExpired;
+  void ackSessionExpired() => _sessionExpired = false;
+
+  /// Called when a gated API call comes back 401 (expired/invalid token). We
+  /// sign the user out so the app prompts a fresh login instead of silently
+  /// failing every request with a dead token.
+  Future<void> handleExpiredSession() async {
+    if (!isLoggedIn) return;
+    _sessionExpired = true;
+    await logout();
+  }
+
   Future<void> _apply(AuthResult res) async {
     _token = res.token;
     _user = res.user;
+    _sessionExpired = false;
     await _persist();
     notifyListeners();
   }

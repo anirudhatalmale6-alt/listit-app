@@ -9,6 +9,9 @@ class Plan {
   final int days;
   final int photos;
   final bool recommended;
+  final int bump;
+  final int bumpWeek;
+  final int priorityPlacement;
 
   const Plan({
     required this.id,
@@ -17,6 +20,9 @@ class Plan {
     required this.days,
     required this.photos,
     required this.recommended,
+    this.bump = 0,
+    this.bumpWeek = 0,
+    this.priorityPlacement = 0,
   });
 
   bool get isFree => price <= 0;
@@ -34,5 +40,8 @@ class Plan {
         days: _asInt(j['daysOfListing'] ?? j['days_of_listing']),
         photos: _asInt(j['numberOfPhotos'] ?? j['number_of_photos']),
         recommended: _asInt(j['recommended']) == 1,
+        bump: _asInt(j['bump']),
+        bumpWeek: _asInt(j['bump_week'] ?? j['bumpWeek']),
+        priorityPlacement: _asInt(j['priorityPlacement'] ?? j['priority_placement']),
       );
 }

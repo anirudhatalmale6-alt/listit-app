@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 1.0.67+68
 
 environment:
   sdk: ^3.12.2
@@ -35,13 +35,19 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   http: ^1.2.2
+  http_parser: ^4.1.2
   cached_network_image: ^3.4.1
   flutter_card_swiper: ^7.0.2
   shared_preferences: ^2.3.2
   intl: ^0.20.2
   url_launcher: ^6.3.1
   flutter_facebook_auth: ^7.1.1
+  google_sign_in: ^6.2.1
   image_picker: ^1.1.2
+  share_plus: ^10.1.4
+  package_info_plus: ^8.0.0
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -78,7 +84,25 @@ flutter:
   assets:
     - assets/listit_logo.png
     - assets/listit_mark.png
+    - assets/adlisted.png
+    - assets/engine.png
+    - assets/hero_farming.jpg
+    - assets/vehicle_catalog.json
     - assets/flags/
+
+  # Inter, the same typeface as the website, the CRM and the admin panel.
+  # Bundled rather than fetched so it renders offline and on first launch.
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   # assets:

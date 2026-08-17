@@ -6,6 +6,7 @@ import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../theme.dart';
 import '../../widgets/flag_badge.dart';
+import '../edit_profile_screen.dart';
 
 /// Verify the signed-in account's email and phone number. Both are needed
 /// before a member can post their first ad (the backend enforces it). Email
@@ -195,14 +196,34 @@ class _VerifyScreenState extends State<VerifyScreen> {
     }
   }
 
+  bool _onboardingLaunched = false;
+
   void _celebrateIfComplete() {
     if (_email == _Stage.done && _phone == _Stage.done) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(const SnackBar(
-          content: Text("You're verified — you can post ads now 🎉"),
+          content: Text("You're verified — let's finish your profile 🎉"),
           backgroundColor: AppColors.success,
         ));
+      // Fresh members land straight on profile setup to add a photo and their
+      // town. Replaces this screen so Back doesn't return to verification;
+      // saving/skipping there returns `true` to whoever opened verification.
+      if (!_onboardingLaunched) {
+        _onboardingLaunched = true;
+        Future.delayed(const Duration(milliseconds: 700), () {
+          if (!mounted) return;
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => EditProfileScreen(
+                auth: widget.auth,
+                api: widget.api,
+                onboarding: true,
+              ),
+            ),
+          );
+        });
+      }
     }
   }
 
@@ -259,7 +280,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppRadius.card),
           border: Border.all(color: AppColors.line),
         ),
         child: child,
@@ -272,7 +293,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
           const SizedBox(width: 10),
           Text(title,
               style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.ink)),
+                  fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.ink)),
           const Spacer(),
           if (done)
             const Text('Verified',
@@ -379,14 +400,14 @@ class _VerifyScreenState extends State<VerifyScreen> {
 
   Widget _countryPicker() {
     return InkWell(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(AppRadius.control),
       onTap: _phone == _Stage.idle ? _pickCountry : null,
       child: Container(
         height: 52,
         padding: const EdgeInsets.symmetric(horizontal: 10),
         decoration: BoxDecoration(
           border: Border.all(color: AppColors.line),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadius.control),
         ),
         child: Row(
           children: [
@@ -414,7 +435,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text('Country',
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
               ),
             ),
             for (final c in kPhoneCountries)
@@ -443,7 +464,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
         hintText: hint,
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppRadius.control)),
       );
 
   Widget _otpField(TextEditingController c, String hint) => TextField(

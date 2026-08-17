@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local working copies kept beside a file before a change.
+*.bak-*
+*.keep-*

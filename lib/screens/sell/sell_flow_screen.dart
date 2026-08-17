@@ -2,7 +2,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../constants/vehicle_options.dart';
+import '../../models/ad_attribute.dart';
 import '../../models/category.dart';
 import '../../models/country.dart';
 import '../../models/plan.dart';
@@ -10,14 +13,16 @@ import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../theme.dart';
 import '../../widgets/flag_badge.dart';
-import '../../widgets/network_photo.dart';
 import '../auth/auth_screen.dart';
 import '../auth/verify_screen.dart';
+import 'ad_live_screen.dart';
 
-/// The Sell tab. Gates on a signed-in session, then runs the multi-step
-/// "place an ad" wizard (DoneDeal-style): category -> details -> photos ->
-/// contact -> review -> publish. Rebuilds itself when the auth state flips so
-/// signing in from the prompt drops straight into the flow.
+/// The Sell tab. Gates on a signed-in session, then shows the "place an ad"
+/// form - a single scrollable page modelled on DoneDeal: title, section /
+/// subsection, ad type, photos, description, price, contact details and how
+/// buyers can reach you. Required fields turn red inline if you try to publish
+/// with them missing. Rebuilds itself when auth flips so signing in drops
+/// straight into the form.
 class SellFlowScreen extends StatefulWidget {
   final ApiService api;
   final AuthService auth;
@@ -49,8 +54,8 @@ class _SellFlowScreenState extends State<SellFlowScreen> {
     if (!widget.auth.isLoggedIn) {
       return _SellSignInPrompt(auth: widget.auth);
     }
-    // A fresh wizard per session so leaving and returning starts clean.
-    return _PlaceAdWizard(
+    // A fresh form per session so leaving and returning starts clean.
+    return _PlaceAdForm(
       key: ValueKey(widget.auth.user?.id),
       api: widget.api,
       auth: widget.auth,
@@ -77,7 +82,7 @@ class _SellSignInPrompt extends StatelessWidget {
               const SizedBox(height: 18),
               const Text(
                 'Sell something on List it',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 10),
@@ -107,40 +112,51 @@ class _SellSignInPrompt extends StatelessWidget {
   }
 }
 
-// --- The wizard -------------------------------------------------------------
+// --- The form ---------------------------------------------------------------
 
-class _PlaceAdWizard extends StatefulWidget {
+class _PlaceAdForm extends StatefulWidget {
   final ApiService api;
   final AuthService auth;
-  const _PlaceAdWizard({super.key, required this.api, required this.auth});
+  const _PlaceAdForm({super.key, required this.api, required this.auth});
 
   @override
-  State<_PlaceAdWizard> createState() => _PlaceAdWizardState();
+  State<_PlaceAdForm> createState() => _PlaceAdFormState();
 }
 
-class _PlaceAdWizardState extends State<_PlaceAdWizard> {
-  static const _steps = ['Category', 'Details', 'Photos', 'Contact', 'Review'];
+class _PlaceAdFormState extends State<_PlaceAdForm> {
   static const _imTowns = [
     'Douglas', 'Onchan', 'Ramsey', 'Peel', 'Castletown', 'Port Erin',
     'Port St Mary', 'Ballasalla', 'Laxey', 'Kirk Michael', 'Ballaugh',
     'Sulby', 'Andreas', 'Foxdale', 'Colby', 'Crosby', 'Glen Vine', 'Santon',
   ];
 
-  int _step = 0;
-
   // Reference data
   List<Category>? _allCats;
   Plan? _plan; // the free "Lite" tier (or cheapest available)
   String? _loadError;
 
+  // Plans available for the chosen category (Lite / Standard / Premium ...),
+  // fetched per-category like the website. _selectedPlan is what the user picks.
+  List<Plan> _catPlans = const [];
+  Plan? _selectedPlan;
+  bool _plansLoading = false;
+
+  /// The plan actually driving photo limits, expiry and payload - the user's
+  /// pick if they've chosen one, otherwise the free default.
+  Plan? get _activePlan => _selectedPlan ?? _plan;
+
+  /// Whole-pound price of the active plan (the website bills in whole pounds).
+  int get _planPrice => (_activePlan?.price ?? 0).round();
+
   // Draft
-  final List<Category> _catPath = []; // top-level ... leaf
+  final List<Category> _catPath = []; // section ... leaf
   int _adType = 1; // 1 = For sale, 2 = Wanted
   final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
   bool _poa = false; // price on application / negotiable
   final List<_Photo> _photos = [];
+  bool _scanning = false; // Larry is looking at a scanned photo
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   PhoneCountry _country = kDefaultCountry;
@@ -149,10 +165,83 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
   bool _allowCall = true;
   bool _allowMessage = true;
 
+  // Vehicle Details (only shown when the chosen category is a vehicle) - the
+  // same registration lookup + structured fields the website collects.
+  final _regCtrl = TextEditingController();
+  final _mileageCtrl = TextEditingController();
+  final _makeCtrl = TextEditingController();
+  final _modelCtrl = TextEditingController();
+  final _variantCtrl = TextEditingController();
+  final _engineCtrl = TextEditingController();
+  final _seatsCtrl = TextEditingController();
+  final _batteryCtrl = TextEditingController();
+  final _logbookCtrl = TextEditingController();
+  String _mileageUnit = 'Miles';
+  String? _bodyType, _fuelType, _colour, _vYear, _transmission, _doors;
+  bool _vehLoading = false;
+  bool? _vehFound; // null = not searched yet, true = found, false = no match
+  Map<String, dynamic>? _vehRaw; // full lookup result, so tax/co2/nct persist
+  bool _verifying = false;
+  bool? _verified; // null = not tried, true = Greenlight earned, false = no match
+
+  // Dynamic per-category attributes (non-vehicle categories), e.g. Property ->
+  // Bedrooms/Property Type. Mirrors what the website collects for the category.
+  List<AdAttribute> _catAttrs = const [];
+  final Map<int, String> _attrValues = {}; // attribute id -> chosen value
+  bool _catAttrsLoading = false;
+
   bool _publishing = false;
 
+  // Inline validation errors (null = no error). Mirror DoneDeal's red-field
+  // treatment - each is shown under its field and the border turns red.
+  String? _errTitle;
+  String? _errCat;
+  String? _errPhotos;
+  String? _errDesc;
+  String? _errPrice;
+  String? _errName;
+  String? _errPhone;
+  String? _errLocation;
+  String? _errContact;
+  String? _errReg;
+  String? _errMileage;
+  String? _errMake;
+  String? _errModel;
+  String? _errVYear;
+  String? _errFuel;
+
+  // Keys used to scroll to the first field that's still missing.
+  final _scroll = ScrollController();
+  final _kTitle = GlobalKey();
+  final _kCat = GlobalKey();
+  final _kPhotos = GlobalKey();
+  final _kDesc = GlobalKey();
+  final _kPrice = GlobalKey();
+  final _kName = GlobalKey();
+  final _kPhone = GlobalKey();
+  final _kLocation = GlobalKey();
+  final _kContact = GlobalKey();
+  final _kVehicle = GlobalKey();
+
   Category? get _leaf => _catPath.isNotEmpty ? _catPath.last : null;
-  int get _maxPhotos => _plan?.photos ?? 4;
+  bool get _isVehicleAd => _leaf?.isVehicle ?? false;
+  bool _wantsField(String key) => _leaf?.wantsVehicleField(key) ?? false;
+  int get _maxPhotos => _activePlan?.photos ?? 4;
+
+  /// The cheapest plan for this category that offers more photos than the
+  /// current allowance — used to nudge an upgrade once the free photos are
+  /// used up (e.g. "Upgrade to Excel — £2 for up to 15 photos").
+  Plan? get _photoUpgradePlan {
+    final current = _maxPhotos;
+    Plan? best;
+    for (final p in _catPlans) {
+      if (p.photos > current && (best == null || p.price < best.price)) {
+        best = p;
+      }
+    }
+    return best;
+  }
+  bool get _phoneVerified => widget.auth.user?.phoneVerified ?? false;
 
   @override
   void initState() {
@@ -162,16 +251,49 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
     _phoneCtrl.text = u?.phone ?? '';
     _country = countryFor(iso: u?.countryCode, dial: u?.flag);
     _location = (u?.location != null && _imTowns.contains(u!.location)) ? u.location : null;
+    _restoreLastLocation();
     _load();
+  }
+
+  static const _kLastLocationPref = 'listit_last_ad_location';
+
+  /// Remember the town picked last time, so sellers don't reselect it on every
+  /// ad. Overrides the profile default with the most recent choice.
+  Future<void> _restoreLastLocation() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_kLastLocationPref);
+      if (mounted && saved != null && _imTowns.contains(saved)) {
+        setState(() => _location = saved);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveLastLocation(String? v) async {
+    if (v == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kLastLocationPref, v);
+    } catch (_) {}
   }
 
   @override
   void dispose() {
+    _scroll.dispose();
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _priceCtrl.dispose();
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
+    _regCtrl.dispose();
+    _mileageCtrl.dispose();
+    _makeCtrl.dispose();
+    _modelCtrl.dispose();
+    _variantCtrl.dispose();
+    _engineCtrl.dispose();
+    _seatsCtrl.dispose();
+    _batteryCtrl.dispose();
+    _logbookCtrl.dispose();
     super.dispose();
   }
 
@@ -210,83 +332,129 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
 
   bool _isLeaf(Category c) => _childrenOf(c.id).isEmpty;
 
-  // --- Navigation ----------------------------------------------------------
+  // --- Validation ----------------------------------------------------------
 
-  void _next() {
-    if (!_validateStep()) return;
-    if (_step < _steps.length - 1) {
-      setState(() => _step++);
+  /// Validate the whole form, set the inline errors and return the key of the
+  /// first field that failed (null if everything passed).
+  GlobalKey? _validate() {
+    GlobalKey? first;
+    void fail(GlobalKey k) => first ??= k;
+
+    _errTitle = _titleCtrl.text.trim().length < 3
+        ? 'Please enter an ad title (at least 3 characters).'
+        : null;
+    if (_errTitle != null) fail(_kTitle);
+
+    if (_catPath.isEmpty) {
+      _errCat = 'Please select a section.';
+    } else if (!_isLeaf(_leaf!)) {
+      _errCat = 'Please choose a subsection.';
+    } else {
+      _errCat = null;
     }
+    if (_errCat != null) fail(_kCat);
+
+    // Vehicle Details - required for a vehicle category, matching the website.
+    _errReg = _errMileage = _errMake = _errModel = _errVYear = _errFuel = null;
+    if (_isVehicleAd) {
+      if (_regCtrl.text.trim().isEmpty) {
+        _errReg = 'Enter the registration, or fill the details in below.';
+      }
+      if (_mileageCtrl.text.trim().isEmpty) {
+        _errMileage = 'Please enter the mileage.';
+      }
+      if (_wantsField('make') && _makeCtrl.text.trim().isEmpty) {
+        _errMake = 'Make is required.';
+      }
+      if (_wantsField('model') && _modelCtrl.text.trim().isEmpty) {
+        _errModel = 'Model is required.';
+      }
+      if (_wantsField('year') && (_vYear == null || _vYear!.isEmpty)) {
+        _errVYear = 'Year is required.';
+      }
+      if (_wantsField('fuel_type') && (_fuelType == null || _fuelType!.isEmpty)) {
+        _errFuel = 'Fuel type is required.';
+      }
+      if (_errReg != null ||
+          _errMileage != null ||
+          _errMake != null ||
+          _errModel != null ||
+          _errVYear != null ||
+          _errFuel != null) {
+        fail(_kVehicle);
+      }
+    }
+
+    _errPhotos = _photos.isEmpty
+        ? 'Please add at least one photo.'
+        : (_photos.any((p) => p.uploading)
+            ? 'Please wait for your photos to finish uploading.'
+            : null);
+    if (_errPhotos != null) fail(_kPhotos);
+
+    _errDesc = _descCtrl.text.trim().length < 10
+        ? 'Please add a description (at least 10 characters).'
+        : null;
+    if (_errDesc != null) fail(_kDesc);
+
+    // Price is required for a For-sale ad unless it's marked negotiable / POA.
+    _errPrice = (_adType == 1 && !_poa && _priceCtrl.text.trim().isEmpty)
+        ? 'Please enter a price, or tick negotiable.'
+        : null;
+    if (_errPrice != null) fail(_kPrice);
+
+    _errName = _nameCtrl.text.trim().isEmpty ? 'Please enter your name.' : null;
+    if (_errName != null) fail(_kName);
+
+    _errPhone = _phoneCtrl.text.trim().length < 6
+        ? 'Please enter a contact number.'
+        : null;
+    if (_errPhone != null) fail(_kPhone);
+
+    _errLocation = _location == null ? 'Please select your town.' : null;
+    if (_errLocation != null) fail(_kLocation);
+
+    _errContact = (!_allowCall && !_allowMessage)
+        ? 'Please pick at least one way for buyers to reach you.'
+        : null;
+    if (_errContact != null) fail(_kContact);
+
+    return first;
   }
 
-  void _back() {
-    if (_step > 0) {
-      setState(() => _step--);
+  void _submit() {
+    final firstError = _validate();
+    setState(() {});
+    if (firstError != null) {
+      _toast('Please finish creating your ad.');
+      // Scroll the first missing field into view, like DoneDeal does.
+      final ctx = firstError.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx,
+            duration: const Duration(milliseconds: 350),
+            alignment: 0.15,
+            curve: Curves.easeOut);
+      }
+      return;
     }
-  }
-
-  bool _validateStep() {
-    switch (_step) {
-      case 0:
-        if (_leaf == null || !_isLeaf(_leaf!)) {
-          _toast('Please choose a category');
-          return false;
-        }
-        return true;
-      case 1:
-        if (_titleCtrl.text.trim().length < 3) {
-          _toast('Give your ad a title (at least 3 characters)');
-          return false;
-        }
-        if (_descCtrl.text.trim().length < 10) {
-          _toast('Add a short description (at least 10 characters)');
-          return false;
-        }
-        return true;
-      case 2:
-        if (_photos.isEmpty) {
-          _toast('Add at least one photo');
-          return false;
-        }
-        if (_photos.any((p) => p.uploading)) {
-          _toast('Please wait for photos to finish uploading');
-          return false;
-        }
-        return true;
-      case 3:
-        if (_nameCtrl.text.trim().isEmpty) {
-          _toast('Enter your name');
-          return false;
-        }
-        if (_phoneCtrl.text.trim().length < 6) {
-          _toast('Enter a contact phone number');
-          return false;
-        }
-        if (_location == null) {
-          _toast('Choose a location');
-          return false;
-        }
-        if (!_allowCall && !_allowMessage) {
-          _toast('Pick at least one way for buyers to reach you');
-          return false;
-        }
-        return true;
-      default:
-        return true;
-    }
+    _publish();
   }
 
   void _toast(String m) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(m)));
+      ..showSnackBar(SnackBar(
+        content: Text(m),
+        backgroundColor: AppColors.danger,
+        behavior: SnackBarBehavior.floating,
+      ));
   }
 
   // --- Publish -------------------------------------------------------------
 
   String _expiryString() {
     final now = DateTime.now();
-    final exp = now.add(Duration(days: _plan?.days ?? 360));
+    final exp = now.add(Duration(days: _activePlan?.days ?? 360));
     String two(int n) => n.toString().padLeft(2, '0');
     return '${exp.year}-${two(exp.month)}-${two(exp.day)} 00:00:00';
   }
@@ -295,11 +463,30 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
     final u = widget.auth.user;
     if (u == null) return;
     setState(() => _publishing = true);
+    // Matches the website's `allow_contact` codes: "1" = Message, "2" =
+    // Phone/Text. (These were previously the wrong way round here, so app-posted
+    // ads had call/message swapped versus how the site reads them.)
     final contact = <String>[];
-    if (_allowCall) contact.add('1');
-    if (_allowMessage) contact.add('2');
+    if (_allowMessage) contact.add('1');
+    if (_allowCall) contact.add('2');
     final categoriesCsv = _catPath.map((c) => c.id).join(',');
     final price = _poa ? 0 : (double.tryParse(_priceCtrl.text.trim()) ?? 0);
+
+    // Category-specific attributes (non-vehicle), in the website's shape:
+    // { "<attrId>": {value, key, category} }.
+    final attribute = <String, dynamic>{};
+    if (!_isVehicleAd && _leaf != null) {
+      for (final a in _catAttrs) {
+        final v = (_attrValues[a.id] ?? '').trim();
+        if (v.isNotEmpty) {
+          attribute['${a.id}'] = {
+            'value': v,
+            'key': a.key,
+            'category': _leaf!.id,
+          };
+        }
+      }
+    }
 
     final payload = <String, dynamic>{
       'user_id': u.id,
@@ -317,20 +504,25 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
       'country': _country.name,
       'location': _location,
       'allow_contact': contact.join(','),
-      'plan_id': _plan?.id ?? 11,
-      'plan_name': _plan?.name ?? 'Lite',
-      'days_of_listing': _plan?.days ?? 360,
-      'plan_price': 0,
-      'total_price': 0,
-      'amount_paid': 0,
+      'plan_id': _activePlan?.id ?? 11,
+      'plan_name': _activePlan?.name ?? 'Lite',
+      'days_of_listing': _activePlan?.days ?? 360,
+      'plan_price': _planPrice,
+      'total_price': _planPrice,
+      // Free plans are considered settled; paid plans are billed like the
+      // website (created unpaid, then paid on the summary/manage flow).
+      'amount_paid': _planPrice == 0 ? 1 : 0,
       'spotlight_days': 0,
-      'bump': 0,
-      'priority_placement': 0,
+      'spotlight_price': 0,
+      'bump': _activePlan?.bump ?? 0,
+      'bump_week': _activePlan?.bumpWeek ?? 0,
+      'priority_placement': _activePlan?.priorityPlacement ?? 0,
       'status': 1,
-      'is_vehicle': (_leaf?.isVehicle ?? false) ? 1 : 0,
+      'is_vehicle': _isVehicleAd ? 1 : 0,
       'phone_verified': 1,
       'images': _photos.map((p) => p.url).toList(),
-      'attribute': <String, dynamic>{},
+      'attribute': attribute,
+      'vehicle_details': _isVehicleAd ? _buildVehicleDetails() : <String, dynamic>{},
       'expiry': _expiryString(),
     };
 
@@ -392,45 +584,22 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
     }
   }
 
-  void _showSuccess(int? adId) {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.check_circle, color: AppColors.success),
-            SizedBox(width: 10),
-            Text('Your ad is live!'),
-          ],
-        ),
-        content: const Text(
-          'Nice one — your listing is now on List it for buyers across the '
-          'Isle of Man to find.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              _reset();
-            },
-            child: const Text('Place another'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              _reset();
-            },
-            child: const Text('Done'),
-          ),
-        ],
+  Future<void> _showSuccess(int? adId) async {
+    // Full "Your ad is live!" celebration (illustration + share + View ad),
+    // mirroring the website. Returning from it starts a fresh form.
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => AdLiveScreen(
+        adId: adId,
+        title: _titleCtrl.text.trim(),
+        api: widget.api,
+        auth: widget.auth,
       ),
-    );
+    ));
+    if (mounted) _reset();
   }
 
   void _reset() {
     setState(() {
-      _step = 0;
       _catPath.clear();
       _adType = 1;
       _titleCtrl.clear();
@@ -439,7 +608,33 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
       _poa = false;
       _photos.clear();
       _publishing = false;
+      _regCtrl.clear();
+      _mileageCtrl.clear();
+      _makeCtrl.clear();
+      _modelCtrl.clear();
+      _variantCtrl.clear();
+      _engineCtrl.clear();
+      _seatsCtrl.clear();
+      _batteryCtrl.clear();
+      _logbookCtrl.clear();
+      _mileageUnit = 'Miles';
+      _bodyType = _fuelType = _colour = _vYear = _transmission = _doors = null;
+      _vehLoading = false;
+      _vehFound = null;
+      _vehRaw = null;
+      _verifying = false;
+      _verified = null;
+      _catAttrs = const [];
+      _attrValues.clear();
+      _catAttrsLoading = false;
+      _catPlans = const [];
+      _selectedPlan = null;
+      _plansLoading = false;
+      _errTitle = _errCat = _errPhotos = _errDesc = _errPrice =
+          _errName = _errPhone = _errLocation = _errContact = null;
+      _errReg = _errMileage = _errMake = _errModel = _errVYear = _errFuel = null;
     });
+    if (_scroll.hasClients) _scroll.jumpTo(0);
   }
 
   // --- Build ---------------------------------------------------------------
@@ -447,276 +642,1231 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Place an ad'),
-        leading: _step > 0
-            ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _back)
-            : null,
-      ),
+      appBar: AppBar(title: const Text('Place an ad')),
       body: _loadError != null
           ? _ErrorState(message: _loadError!, onRetry: _load)
           : _allCats == null
               ? const Center(child: CircularProgressIndicator())
-              : Column(
-                  children: [
-                    _StepBar(steps: _steps, current: _step),
-                    Expanded(child: _buildStep()),
-                    _bottomBar(),
-                  ],
-                ),
+              : _form(),
     );
   }
 
-  Widget _buildStep() {
-    switch (_step) {
-      case 0:
-        return _categoryStep();
-      case 1:
-        return _detailsStep();
-      case 2:
-        return _photosStep();
-      case 3:
-        return _contactStep();
-      default:
-        return _reviewStep();
-    }
-  }
-
-  Widget _bottomBar() {
-    if (_allCats == null) return const SizedBox.shrink();
-    final isReview = _step == _steps.length - 1;
-    return SafeArea(
-      top: false,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.line)),
-        ),
-        child: SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: _publishing
-                ? null
-                : isReview
-                    ? _publish
-                    : _next,
-            child: _publishing
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
-                  )
-                : Text(isReview ? 'Publish ad — Free' : 'Continue'),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // --- Step 0: Category ----------------------------------------------------
-
-  Widget _categoryStep() {
-    // Current level = children of the last chosen category (or top level).
-    final parentId = _catPath.isEmpty ? 0 : _catPath.last.id;
-    final options = _childrenOf(parentId);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _form() {
+    return ListView(
+      controller: _scroll,
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
       children: [
-        if (_catPath.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                for (var i = 0; i < _catPath.length; i++) ...[
-                  InkWell(
-                    onTap: () => setState(
-                        () => _catPath.removeRange(i + 1, _catPath.length)),
-                    child: Text(
-                      _catPath[i].name,
-                      style: const TextStyle(
-                          color: AppColors.primary, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  if (i < _catPath.length - 1)
-                    const Icon(Icons.chevron_right, size: 16, color: AppColors.muted),
-                ],
-              ],
+        // Scan with Larry - snap a photo, let the AI draft the listing.
+        _scanCard(),
+        const SizedBox(height: 18),
+
+        // Ad Title
+        KeyedSubtree(
+          key: _kTitle,
+          child: _field(
+            'Ad Title',
+            TextField(
+              controller: _titleCtrl,
+              textCapitalization: TextCapitalization.sentences,
+              maxLength: 70,
+              onChanged: (_) => _clear(() => _errTitle = null),
+              decoration:
+                  _dec('e.g. VW Golf, iPhone 14 Pro, 3-seater sofa',
+                      error: _errTitle,
+                      filled: _titleCtrl.text.trim().isNotEmpty),
             ),
           ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-          child: Text(
-            _catPath.isEmpty ? 'What are you selling?' : 'Choose a subcategory',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-          ),
         ),
-        Expanded(
-          child: ListView.separated(
-            itemCount: options.length,
-            separatorBuilder: (_, _) => const Divider(height: 1),
-            itemBuilder: (_, i) {
-              final c = options[i];
-              final leaf = _isLeaf(c);
-              final selected = _leaf?.id == c.id && leaf;
-              return ListTile(
-                title: Text(c.name,
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: c.adCount > 0
-                    ? Text('${c.adCount} live', style: const TextStyle(fontSize: 12))
-                    : null,
-                trailing: leaf
-                    ? (selected
-                        ? const Icon(Icons.check_circle, color: AppColors.primary)
-                        : const Icon(Icons.radio_button_unchecked,
-                            color: AppColors.muted))
-                    : const Icon(Icons.chevron_right, color: AppColors.muted),
-                onTap: () {
-                  setState(() {
-                    if (leaf) {
-                      // Replace any previously chosen leaf at this level.
-                      if (_leaf?.id == c.id) {
-                        _catPath.removeLast();
-                      } else {
-                        _catPath.add(c);
-                      }
-                    } else {
-                      _catPath.add(c);
-                    }
-                  });
-                },
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
 
-  // --- Step 1: Details -----------------------------------------------------
+        // Section / Subsection dropdowns
+        KeyedSubtree(key: _kCat, child: Column(children: _categoryDropdowns())),
 
-  Widget _detailsStep() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      children: [
-        const Text('Listing type',
-            style: TextStyle(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
+        // Vehicle Details - registration lookup + structured specs, shown only
+        // for vehicle categories, exactly like the website.
+        if (_isVehicleAd)
+          KeyedSubtree(key: _kVehicle, child: _vehicleSection()),
+
+        // Category-specific details for non-vehicle categories (Property ->
+        // Bedrooms, etc.), pulled dynamically to match the website.
+        if (!_isVehicleAd) ..._attributeFields(),
+
+        // Ad Type
+        _sectionLabel('Ad Type'),
         Row(
           children: [
-            _typeChip('For sale', 1),
-            const SizedBox(width: 10),
-            _typeChip('Wanted', 2),
+            _radio('For Sale', 1),
+            const SizedBox(width: 8),
+            _radio('Wanted', 2),
           ],
         ),
         const SizedBox(height: 20),
-        _label('Title'),
-        TextField(
-          controller: _titleCtrl,
-          textCapitalization: TextCapitalization.sentences,
-          maxLength: 70,
-          decoration: _dec('e.g. iPhone 14 Pro, 128GB, excellent condition'),
-        ),
-        const SizedBox(height: 8),
-        _label('Price'),
-        TextField(
-          controller: _priceCtrl,
-          enabled: !_poa,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-          ],
-          decoration: _dec('0.00').copyWith(
-            prefixText: '£ ',
-            hintText: _poa ? 'Contact for price' : '0.00',
+
+        // Photos
+        KeyedSubtree(key: _kPhotos, child: _photosSection()),
+
+        // Description
+        KeyedSubtree(
+          key: _kDesc,
+          child: _field(
+            'Description',
+            TextField(
+              controller: _descCtrl,
+              textCapitalization: TextCapitalization.sentences,
+              maxLines: 6,
+              maxLength: 4000,
+              onChanged: (_) => _clear(() => _errDesc = null),
+              decoration: _dec(
+                  'Tell buyers about your ad — condition, age, why you\'re selling, collection or delivery.',
+                  error: _errDesc,
+                  filled: _descCtrl.text.trim().isNotEmpty),
+            ),
           ),
         ),
-        Row(
-          children: [
-            Checkbox(
-              value: _poa,
-              onChanged: (v) => setState(() => _poa = v ?? false),
+
+        // Price
+        KeyedSubtree(
+          key: _kPrice,
+          child: _field(
+            'Price',
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: _priceCtrl,
+                  enabled: !_poa,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                  ],
+                  onChanged: (_) => _clear(() => _errPrice = null),
+                  decoration: _dec(_poa ? 'Contact for price' : '',
+                          error: _errPrice,
+                          filled: _poa || _priceCtrl.text.trim().isNotEmpty)
+                      .copyWith(
+                    // Always-visible £ so the field reads "£" with no 0.00,
+                    // exactly as the website shows it.
+                    prefixIcon: const Padding(
+                      padding: EdgeInsets.only(left: 14, right: 8),
+                      child: Text('£',
+                          style: TextStyle(
+                              fontSize: 16,
+                              color: AppColors.ink,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                    prefixIconConstraints:
+                        const BoxConstraints(minWidth: 0, minHeight: 0),
+                  ),
+                ),
+                Row(
+                  children: [
+                    Checkbox(
+                      value: _poa,
+                      onChanged: (v) => setState(() {
+                        _poa = v ?? false;
+                        if (_poa) _errPrice = null;
+                      }),
+                    ),
+                    const Expanded(
+                      child: Text('Price on application / negotiable'),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            const Text('Price on application / negotiable'),
-          ],
+          ),
         ),
+
         const SizedBox(height: 8),
-        _label('Description'),
-        TextField(
-          controller: _descCtrl,
-          textCapitalization: TextCapitalization.sentences,
-          maxLines: 6,
-          maxLength: 4000,
-          decoration: _dec(
-              'Describe what you\'re selling — condition, age, why you\'re selling, collection or delivery.'),
+        const Divider(),
+        const SizedBox(height: 8),
+        const Text('Contact Preferences',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 16),
+
+        // Full name
+        KeyedSubtree(
+          key: _kName,
+          child: _field(
+            'Full Name',
+            TextField(
+              controller: _nameCtrl,
+              onChanged: (_) => _clear(() => _errName = null),
+              decoration: _dec('Name buyers will see',
+                  error: _errName, filled: _nameCtrl.text.trim().isNotEmpty),
+            ),
+          ),
         ),
+
+        // Phone (with Verified badge)
+        KeyedSubtree(
+          key: _kPhone,
+          child: _field(
+            'Phone',
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _countryPicker(),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _phoneCtrl,
+                    keyboardType: TextInputType.phone,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]')),
+                    ],
+                    onChanged: (v) {
+                      _clear(() => _errPhone = null);
+                      if (_flagLocked || _country.dial == '353') return;
+                      final c = detectUkOrManx(v);
+                      if (c != null && c.iso != _country.iso) {
+                        setState(() => _country = c);
+                      }
+                    },
+                    decoration: _dec(_country.hint,
+                        error: _errPhone,
+                        filled: _phoneCtrl.text.trim().isNotEmpty),
+                  ),
+                ),
+              ],
+            ),
+            trailing: _phoneVerified
+                ? const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.check, size: 16, color: AppColors.success),
+                      SizedBox(width: 4),
+                      Text('Verified',
+                          style: TextStyle(
+                              color: AppColors.slate,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  )
+                : null,
+          ),
+        ),
+
+        // Email (read-only, from the account)
+        _field(
+          'Email',
+          TextField(
+            enabled: false,
+            decoration: _dec(widget.auth.user?.email ?? '',
+                    filled: (widget.auth.user?.email ?? '').isNotEmpty)
+                .copyWith(
+              hintStyle: const TextStyle(color: AppColors.slate),
+            ),
+          ),
+        ),
+
+        // Town / area
+        KeyedSubtree(
+          key: _kLocation,
+          child: _field(
+            'Town / Area',
+            DropdownButtonFormField<String>(
+              initialValue: _location,
+              isExpanded: true,
+              decoration: _dec('Please select…',
+                  error: _errLocation, filled: _location != null),
+              items: [
+                for (final t in _imTowns)
+                  DropdownMenuItem(value: t, child: Text(t)),
+              ],
+              onChanged: (v) {
+                setState(() {
+                  _location = v;
+                  _errLocation = null;
+                });
+                _saveLastLocation(v);
+              },
+            ),
+          ),
+        ),
+
+        // Allow contact by
+        KeyedSubtree(
+          key: _kContact,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Allow contact by',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              const Text('Choose how buyers can reach you about this ad',
+                  style: TextStyle(color: AppColors.slate, fontSize: 13)),
+              const SizedBox(height: 12),
+              _contactCard('Phone and text', _allowCall,
+                  (v) => setState(() { _allowCall = v; _errContact = null; })),
+              const SizedBox(height: 10),
+              _contactCard('Message through List it', _allowMessage,
+                  (v) => setState(() { _allowMessage = v; _errContact = null; })),
+              if (_errContact != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(_errContact!,
+                      style: const TextStyle(
+                          color: AppColors.danger, fontSize: 12.5)),
+                ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 18),
+        ..._planSection(),
+
+        // The Place-ad button lives at the very end of the form (not pinned to
+        // the bottom), so sellers scroll past every field before they can post
+        // — fewer half-finished ads, less back-and-forth.
+        const SizedBox(height: 24),
+        _publishBar(),
       ],
     );
   }
 
-  Widget _typeChip(String label, int value) {
-    final selected = _adType == value;
-    return Expanded(
-      child: InkWell(
-        onTap: () => setState(() => _adType = value),
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          alignment: Alignment.center,
+  /// The "Select Your Plan" picker - the same Lite / Standard / Premium plans
+  /// the website offers for this category, as tappable cards. Falls back to the
+  /// simple free-plan confirmation when plans aren't loaded (e.g. before a
+  /// category is chosen, or if the plans call is unavailable).
+  List<Widget> _planSection() {
+    if (_plansLoading) {
+      return const [
+        Padding(
+          padding: EdgeInsets.symmetric(vertical: 18),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ];
+    }
+    if (_catPlans.isEmpty) {
+      return [
+        Container(
+          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: selected ? AppColors.primary.withValues(alpha: 0.08) : Colors.white,
-            border: Border.all(
-                color: selected ? AppColors.primary : AppColors.line, width: 1.4),
-            borderRadius: BorderRadius.circular(10),
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.control),
           ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              color: selected ? AppColors.primary : AppColors.slate,
+          child: Row(
+            children: [
+              const Icon(Icons.verified_outlined, color: AppColors.success),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '${_activePlan?.name ?? 'Lite'} plan — Free · live for '
+                  '${_activePlan?.days ?? 360} days',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ];
+    }
+    return [
+      const Text('Select your plan',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 2),
+      const Text('Choose how your ad is promoted',
+          style: TextStyle(color: AppColors.slate, fontSize: 13)),
+      const SizedBox(height: 12),
+      for (var i = 0; i < _catPlans.length; i++) ...[
+        _planCard(_catPlans[i], i),
+        if (i != _catPlans.length - 1) const SizedBox(height: 10),
+      ],
+    ];
+  }
+
+  Widget _planCard(Plan plan, int index) {
+    final selected = _selectedPlan?.id == plan.id;
+    // Ad-views strength bar, mirroring the website (1 / 3 / 5 of 5 blocks).
+    final filled = index == 0 ? 1 : (index == 1 ? 3 : 5);
+    final barColor = index >= 1 ? AppColors.success : const Color(0xFFFD7E14);
+    final priceText = plan.price <= 0 ? 'Free' : '£${_money(plan.price)}';
+    return InkWell(
+      onTap: () => _selectPlan(plan),
+      borderRadius: BorderRadius.circular(AppRadius.control),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppRadius.control),
+          border: Border.all(
+            color: selected ? AppColors.primary : AppColors.line,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(plan.name,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700)),
+                ),
+                if (plan.recommended)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(AppRadius.image),
+                    ),
+                    child: const Text('Recommended',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700)),
+                  ),
+              ],
             ),
-          ),
+            const SizedBox(height: 4),
+            Text(priceText,
+                style: const TextStyle(
+                    fontSize: 22, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Text('Ad views',
+                    style: TextStyle(fontSize: 12, color: AppColors.slate)),
+                const SizedBox(width: 8),
+                for (var b = 0; b < 5; b++)
+                  Expanded(
+                    child: Container(
+                      height: 4,
+                      margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                      decoration: BoxDecoration(
+                        color: b < filled ? barColor : const Color(0xFFE0E0E0),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _planFeature('${plan.days} days listing'),
+            if (plan.bump > 0)
+              _planFeature('${plan.bump} x Bump ${plan.bumpWeek} per week'),
+            _planFeature('Up to ${plan.photos} photos'),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () => _selectPlan(plan),
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: selected ? AppColors.primary : Colors.white,
+                  foregroundColor: selected ? Colors.white : AppColors.primary,
+                  side: const BorderSide(color: AppColors.primary),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(selected ? 'Selected' : 'Choose',
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  // --- Step 2: Photos ------------------------------------------------------
-
-  Widget _photosStep() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      children: [
-        Text('Add photos (up to $_maxPhotos)',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 4),
-        const Text(
-          'The first photo is your main image. Clear, well-lit photos sell faster.',
-          style: TextStyle(color: AppColors.slate, height: 1.35),
-        ),
-        const SizedBox(height: 16),
-        GridView.count(
-          crossAxisCount: 3,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
+  Widget _planFeature(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(
           children: [
-            for (var i = 0; i < _photos.length; i++) _photoTile(_photos[i], i),
-            if (_photos.length < _maxPhotos) _addPhotoTile(),
+            const Icon(Icons.check_rounded, size: 18, color: AppColors.success),
+            const SizedBox(width: 8),
+            Expanded(
+                child: Text(text, style: const TextStyle(fontSize: 13.5))),
           ],
         ),
+      );
+
+  /// £5.00 -> "5", £5.50 -> "5.50" - drop trailing ".00" like the website.
+  String _money(double v) {
+    if (v == v.roundToDouble()) return v.toStringAsFixed(0);
+    return v.toStringAsFixed(2);
+  }
+
+  /// Run [fn] (which clears an error) and rebuild only if it actually changed
+  /// something, so typing in a valid field doesn't thrash setState.
+  void _clear(VoidCallback fn) {
+    setState(fn);
+  }
+
+  // Section + subsection dropdowns, one per level of the category tree, so the
+  // common two-level case reads exactly like DoneDeal's Section / Subsection.
+  List<Widget> _categoryDropdowns() {
+    final widgets = <Widget>[];
+    var parentId = 0;
+    var errorAttached = false;
+    for (var level = 0;; level++) {
+      final options = _childrenOf(parentId);
+      if (options.isEmpty) break;
+      final selected = level < _catPath.length ? _catPath[level] : null;
+      // Show the category error on the first dropdown still awaiting a choice.
+      String? err;
+      if (!errorAttached && selected == null && _errCat != null) {
+        err = _errCat;
+        errorAttached = true;
+      }
+      widgets.add(_field(
+        level == 0 ? 'Section' : 'Subsection',
+        DropdownButtonFormField<int>(
+          initialValue: selected?.id,
+          isExpanded: true,
+          decoration: _dec('Please select…', error: err, filled: selected != null),
+          items: [
+            for (final c in options)
+              DropdownMenuItem(value: c.id, child: Text(c.name)),
+          ],
+          onChanged: (id) {
+            if (id == null) return;
+            setState(() {
+              if (level < _catPath.length) {
+                _catPath.removeRange(level, _catPath.length);
+              }
+              _catPath.add(options.firstWhere((c) => c.id == id));
+              _errCat = null;
+            });
+            _loadCatAttrs();
+            _loadCatPlans();
+          },
+        ),
+      ));
+      if (selected == null) break; // wait for this level before showing deeper
+      parentId = selected.id;
+    }
+    return widgets;
+  }
+
+  // --- Category-specific attributes (non-vehicle) --------------------------
+
+  /// Fetch the selected category's attributes (and its ancestors', since the
+  /// website defines most on the top-level category) so the Sell form collects
+  /// the same extra details the website does for that category.
+  Future<void> _loadCatAttrs() async {
+    final leaf = _leaf;
+    if (leaf == null || leaf.isVehicle) {
+      setState(() {
+        _catAttrs = const [];
+        _attrValues.clear();
+        _catAttrsLoading = false;
+      });
+      return;
+    }
+    setState(() {
+      _catAttrsLoading = true;
+      _catAttrs = const [];
+      _attrValues.clear();
+    });
+    try {
+      final ids = _catPath.map((c) => c.id).toSet();
+      final lists =
+          await Future.wait(ids.map((id) => widget.api.fetchAttributes(id)));
+      final seen = <int>{};
+      final merged = <AdAttribute>[];
+      for (final l in lists) {
+        for (final a in l) {
+          if (seen.add(a.id)) merged.add(a);
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _catAttrs = merged;
+          _catAttrsLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _catAttrsLoading = false);
+    }
+  }
+
+  /// Load the plans that apply to the chosen leaf category (Lite / Standard /
+  /// Premium ...), exactly like the website's Place-an-ad plan picker. Defaults
+  /// the selection to the free tier so publishing stays free unless upgraded.
+  Future<void> _loadCatPlans() async {
+    final leaf = _leaf;
+    if (leaf == null) {
+      setState(() {
+        _catPlans = const [];
+        _selectedPlan = null;
+        _plansLoading = false;
+      });
+      return;
+    }
+    setState(() {
+      _plansLoading = true;
+    });
+    try {
+      final plans = await widget.api.fetchPlans(leaf.id);
+      if (!mounted) return;
+      Plan? def;
+      for (final p in plans) {
+        if (p.isFree) {
+          def = p;
+          break;
+        }
+      }
+      def ??= plans.isNotEmpty ? plans.first : null;
+      setState(() {
+        _catPlans = plans;
+        _selectedPlan = def;
+        _plansLoading = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _catPlans = const [];
+          _plansLoading = false;
+        });
+      }
+    }
+  }
+
+  List<Widget> _attributeFields() {
+    if (_leaf == null || _leaf!.isVehicle) return const [];
+    if (_catAttrsLoading) {
+      return [
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 18),
+          child: Center(
+            child: SizedBox(
+              height: 22,
+              width: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+      ];
+    }
+    if (_catAttrs.isEmpty) return const [];
+    final w = <Widget>[
+      const SizedBox(height: 4),
+      Text('${_leaf!.name} details',
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 12),
+    ];
+    for (final a in _catAttrs) {
+      if (a.hasOptions) {
+        w.add(_field(
+          a.label,
+          DropdownButtonFormField<String>(
+            initialValue: (_attrValues[a.id] ?? '').isEmpty
+                ? null
+                : _attrValues[a.id],
+            isExpanded: true,
+            decoration: _dec('Please select…',
+                filled: (_attrValues[a.id] ?? '').isNotEmpty),
+            items: [
+              for (final o in a.options)
+                DropdownMenuItem(value: o, child: Text(o)),
+            ],
+            onChanged: (v) => setState(() => _attrValues[a.id] = v ?? ''),
+          ),
+        ));
+      } else {
+        final isNum = a.inputType == 'number';
+        w.add(_field(
+          a.label,
+          TextField(
+            keyboardType: isNum ? TextInputType.number : TextInputType.text,
+            inputFormatters:
+                isNum ? [FilteringTextInputFormatter.digitsOnly] : null,
+            onChanged: (v) => setState(() => _attrValues[a.id] = v),
+            decoration: _dec('Enter ${a.label.toLowerCase()}',
+                filled: (_attrValues[a.id] ?? '').isNotEmpty),
+          ),
+        ));
+      }
+    }
+    return w;
+  }
+
+  // --- Vehicle Details -----------------------------------------------------
+
+  /// The "Vehicle Details" block for vehicle categories: registration lookup
+  /// (the Greenlight-style "Find"), mileage, then the structured spec fields
+  /// the category asks for. Mirrors the website's CarValue section.
+  Widget _vehicleSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 4),
+        const Text('Vehicle Details',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        const Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.verified_rounded, size: 16, color: AppColors.success),
+            SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Pop in your reg and we\'ll fill in the details. Verify your log '
+                'book below to earn a free Greenlight badge on your ad.',
+                style: TextStyle(
+                    color: AppColors.slate, fontSize: 13, height: 1.3),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+
+        // Registration + Find
+        _sectionLabel('Vehicle registration'),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _regCtrl,
+                textCapitalization: TextCapitalization.characters,
+                inputFormatters: [_UpperCaseTextFormatter()],
+                onChanged: (_) => _clear(() => _errReg = null),
+                decoration: _dec('e.g. MN12 ABC',
+                    error: _errReg, filled: _regCtrl.text.trim().isNotEmpty),
+              ),
+            ),
+            const SizedBox(width: 10),
+            SizedBox(
+              height: 54,
+              width: 92,
+              child: ElevatedButton(
+                onPressed: _vehLoading ? null : _findVehicle,
+                child: _vehLoading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text('Find'),
+              ),
+            ),
+          ],
+        ),
+        if (_vehFound == true) ...[
+          const SizedBox(height: 10),
+          _vehBanner(true,
+              'Vehicle found — details filled in below. Check them over and add your mileage.'),
+        ] else if (_vehFound == false) ...[
+          const SizedBox(height: 10),
+          _vehBanner(false,
+              'We couldn\'t find that reg. No problem — just fill the details in below.'),
+        ],
+        const SizedBox(height: 18),
+
+        // Mileage + unit
+        _sectionLabel('Mileage'),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _mileageCtrl,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                onChanged: (_) => _clear(() => _errMileage = null),
+                decoration: _dec('e.g. 45000',
+                    error: _errMileage,
+                    filled: _mileageCtrl.text.trim().isNotEmpty),
+              ),
+            ),
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 104,
+              child: DropdownButtonFormField<String>(
+                initialValue: _mileageUnit,
+                decoration: _dec('', filled: true),
+                items: const [
+                  DropdownMenuItem(value: 'Miles', child: Text('Miles')),
+                  DropdownMenuItem(value: 'KM', child: Text('KM')),
+                ],
+                onChanged: (v) => setState(() => _mileageUnit = v ?? 'Miles'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+
+        // Structured spec fields, gated by the category's vehicle_data flags.
+        ..._vehicleFields(),
+
+        const SizedBox(height: 6),
+        _verifyBlock(),
+        const Divider(height: 30),
+      ],
+    );
+  }
+
+  /// The Greenlight ownership check: enter the log book (V5C/VRC) number and
+  /// we confirm it against the reg. A match earns the free Greenlight badge.
+  Widget _verifyBlock() {
+    if (_verified == true) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.success.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(AppRadius.control),
+          border: Border.all(color: AppColors.success.withValues(alpha: 0.5)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.verified_rounded, color: AppColors.success, size: 30),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Greenlight badge earned',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15.5,
+                          color: AppColors.success)),
+                  SizedBox(height: 2),
+                  Text('Your ownership is verified — buyers will see the green '
+                      'Greenlight tick on your ad.',
+                      style: TextStyle(color: AppColors.slate, fontSize: 12.8)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.verified_outlined,
+                size: 30, color: AppColors.success),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Verify ownership (optional)',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Enter your log book number to earn a free Greenlight badge '
+                    '— it shows buyers your vehicle is genuine.',
+                    style: const TextStyle(
+                        color: AppColors.slate, fontSize: 12.8, height: 1.3),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _logbookCtrl,
+                textCapitalization: TextCapitalization.characters,
+                onChanged: (_) {
+                  if (_verified == false) setState(() => _verified = null);
+                },
+                decoration: _dec('Log book (V5C) number',
+                    filled: _logbookCtrl.text.trim().isNotEmpty),
+              ),
+            ),
+            const SizedBox(width: 10),
+            SizedBox(
+              height: 54,
+              width: 92,
+              child: OutlinedButton(
+                onPressed: _verifying ? null : _verifyOwnership,
+                child: _verifying
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Check'),
+              ),
+            ),
+          ],
+        ),
+        if (_verified == false)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              'That log book number didn\'t match this reg. Double-check the '
+              '10-character code on the top-right of your log book.',
+              style: TextStyle(color: AppColors.danger, fontSize: 12.5),
+            ),
+          ),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+
+  Future<void> _verifyOwnership() async {
+    final reg = _regCtrl.text.trim().toUpperCase();
+    final vrc = _logbookCtrl.text.trim();
+    if (reg.isEmpty) {
+      _toast('Enter your registration and tap Find first.');
+      return;
+    }
+    if (vrc.isEmpty) {
+      _toast('Enter your log book (V5C) number to verify.');
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() => _verifying = true);
+    try {
+      final ok = await widget.api.verifyVehicleOwnership(reg, vrc);
+      if (!mounted) return;
+      setState(() {
+        _verifying = false;
+        _verified = ok;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _verifying = false;
+        _verified = false;
+      });
+      _toast('Couldn\'t reach the verification service — try again in a moment.');
+    }
+  }
+
+  List<Widget> _vehicleFields() {
+    final w = <Widget>[];
+    if (_wantsField('make')) {
+      w.add(_vehText('Make', _makeCtrl,
+          hint: 'e.g. Volkswagen', error: _errMake, onCleared: () => _errMake = null));
+    }
+    if (_wantsField('model')) {
+      w.add(_vehText('Model', _modelCtrl,
+          hint: 'e.g. Golf', error: _errModel, onCleared: () => _errModel = null));
+    }
+    if (_wantsField('variant')) {
+      w.add(_vehText('Variant', _variantCtrl, hint: 'e.g. GT TSI'));
+    }
+    if (_wantsField('year')) {
+      w.add(_vehDrop('Year', _vYear, vehicleYears(),
+          (v) => setState(() { _vYear = v; _errVYear = null; }), error: _errVYear));
+    }
+    if (_wantsField('fuel_type')) {
+      w.add(_vehDrop('Fuel type', _fuelType, kFuelTypes,
+          (v) => setState(() { _fuelType = v; _errFuel = null; }),
+          error: _errFuel, titleCaseLabels: true));
+    }
+    if (_wantsField('transmission')) {
+      w.add(_vehDrop('Transmission', _transmission, kTransmissions,
+          (v) => setState(() => _transmission = v)));
+    }
+    if (_wantsField('body_type')) {
+      w.add(_vehDrop('Body type', _bodyType, kBodyTypes,
+          (v) => setState(() => _bodyType = v)));
+    }
+    if (_wantsField('colour')) {
+      w.add(_vehDrop('Colour', _colour, kColours,
+          (v) => setState(() => _colour = v), titleCaseLabels: true));
+    }
+    if (_wantsField('engine_size')) {
+      w.add(_vehText('Engine size (cc)', _engineCtrl,
+          hint: 'e.g. 1400', number: true));
+    }
+    if (_wantsField('number_of_doors')) {
+      w.add(_vehDrop('Doors', _doors, kDoorOptions,
+          (v) => setState(() => _doors = v)));
+    }
+    if (_wantsField('number_of_seats')) {
+      w.add(_vehText('Seats', _seatsCtrl, hint: 'e.g. 5', number: true));
+    }
+    if (_wantsField('battery_range') &&
+        _fuelType != null &&
+        isBatteryFuel(_fuelType!)) {
+      w.add(_vehText('Battery range', _batteryCtrl, hint: 'e.g. 250 miles'));
+    }
+    return w;
+  }
+
+  Widget _vehText(String label, TextEditingController c,
+      {String? hint, String? error, bool number = false, VoidCallback? onCleared}) {
+    return _field(
+      label,
+      TextField(
+        controller: c,
+        keyboardType: number ? TextInputType.number : TextInputType.text,
+        textCapitalization:
+            number ? TextCapitalization.none : TextCapitalization.words,
+        inputFormatters:
+            number ? [FilteringTextInputFormatter.digitsOnly] : null,
+        onChanged: (_) => setState(() {
+          if (onCleared != null) onCleared();
+        }),
+        decoration:
+            _dec(hint ?? '', error: error, filled: c.text.trim().isNotEmpty),
+      ),
+    );
+  }
+
+  Widget _vehDrop(String label, String? value, List<String> options,
+      ValueChanged<String?> onChanged,
+      {String? error, bool titleCaseLabels = false}) {
+    String lbl(String o) => titleCaseLabels ? _titleCase(o) : o;
+    // If a lookup returned a value that isn't in our list, keep it selectable
+    // rather than silently dropping it.
+    final items = (value == null || options.contains(value))
+        ? options
+        : [value, ...options];
+    return _field(
+      label,
+      DropdownButtonFormField<String>(
+        initialValue: value,
+        isExpanded: true,
+        decoration: _dec('Please select…',
+            error: error, filled: (value ?? '').isNotEmpty),
+        items: [
+          for (final o in items)
+            DropdownMenuItem(value: o, child: Text(lbl(o))),
+        ],
+        onChanged: onChanged,
+      ),
+    );
+  }
+
+  Widget _vehBanner(bool ok, String text) {
+    final color = ok ? AppColors.success : const Color(0xFFB45309);
+    final bg = (ok ? AppColors.success : const Color(0xFFF59E0B))
+        .withValues(alpha: 0.10);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(AppRadius.control)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(ok ? Icons.check_circle_rounded : Icons.info_rounded,
+              size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text,
+                style: TextStyle(
+                    color: color,
+                    fontSize: 12.8,
+                    height: 1.3,
+                    fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _titleCase(String t) => t.isEmpty
+      ? t
+      : t
+          .toLowerCase()
+          .split(' ')
+          .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
+          .join(' ');
+
+  String? _matchOption(List<String> options, String value) {
+    if (value.isEmpty) return null;
+    for (final o in options) {
+      if (o.toLowerCase() == value.toLowerCase()) return o;
+    }
+    return null;
+  }
+
+  Future<void> _findVehicle() async {
+    final reg = _regCtrl.text.trim().toUpperCase();
+    if (reg.isEmpty) {
+      setState(() => _errReg = 'Enter a registration to search.');
+      return;
+    }
+    _regCtrl.text = reg;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _vehLoading = true;
+      _errReg = null;
+    });
+    try {
+      final v = await widget.api.lookupVehicle(reg);
+      if (!mounted) return;
+      setState(() {
+        _vehLoading = false;
+        _verified = null; // different vehicle - any prior Greenlight is stale
+        _logbookCtrl.clear();
+        if (v == null || v.isEmpty) {
+          _vehFound = false;
+          _vehRaw = null;
+        } else {
+          _vehFound = true;
+          _applyLookup(v);
+        }
+      });
+    } catch (_) {
+      // lookupVehicle already swallows errors, but stay safe: just invite
+      // manual entry via the amber banner rather than a scary error.
+      if (!mounted) return;
+      setState(() {
+        _vehLoading = false;
+        _vehFound = false;
+        _vehRaw = null;
+      });
+    }
+  }
+
+  /// Fill the spec fields from a lookup result (call inside setState).
+  void _applyLookup(Map<String, dynamic> v) {
+    _vehRaw = v;
+    String s(dynamic x) => (x ?? '').toString().trim();
+    void put(TextEditingController c, dynamic val) {
+      final t = s(val);
+      if (t.isNotEmpty && t != '-') c.text = t;
+    }
+    put(_makeCtrl, v['make']);
+    put(_modelCtrl, v['model']);
+    final variant = (s(v['variant']).isNotEmpty && s(v['variant']) != '-')
+        ? s(v['variant'])
+        : (s(v['title']) == '-' ? '' : s(v['title']));
+    if (variant.isNotEmpty) _variantCtrl.text = variant;
+    put(_engineCtrl, v['engine_size']);
+    put(_seatsCtrl, v['number_of_seats']);
+    put(_batteryCtrl, v['battery_range']);
+    _bodyType = _matchOption(kBodyTypes, s(v['body_type'])) ?? _bodyType;
+    _fuelType = _matchOption(kFuelTypes, s(v['fuel_type'])) ?? _fuelType;
+    _colour = _matchOption(kColours, s(v['colour'])) ?? _colour;
+    _transmission =
+        _matchOption(kTransmissions, s(v['transmission'])) ?? _transmission;
+    final yr = s(v['year']);
+    if (yr.isNotEmpty) _vYear = yr;
+    final d = s(v['number_of_doors']);
+    if (d.isNotEmpty) _doors = d;
+    final ml = s(v['milage']);
+    if (ml.isNotEmpty && _mileageCtrl.text.trim().isEmpty) _mileageCtrl.text = ml;
+    final mu = s(v['milage_unit']);
+    if (mu.isNotEmpty) {
+      _mileageUnit = mu.toUpperCase().startsWith('K') ? 'KM' : 'Miles';
+    }
+    _maybeAutoTitle();
+  }
+
+  /// Build a sensible ad title from the vehicle if the seller hasn't typed one.
+  void _maybeAutoTitle() {
+    if (_titleCtrl.text.trim().isNotEmpty) return;
+    final parts = [
+      _vYear ?? '',
+      _makeCtrl.text.trim(),
+      _modelCtrl.text.trim(),
+      _variantCtrl.text.trim(),
+    ].where((p) => p.isNotEmpty).toList();
+    if (parts.length >= 2) {
+      _titleCtrl.text = _titleCase(parts.join(' '));
+      _errTitle = null;
+    }
+  }
+
+  /// The `vehicle_details` object sent with the ad. Starts from the raw lookup
+  /// (so tax/CO2/NCT etc. persist) and lets the on-screen fields win.
+  Map<String, dynamic> _buildVehicleDetails() {
+    final m = <String, dynamic>{...?_vehRaw};
+    void put(String k, String? val) {
+      final t = (val ?? '').trim();
+      if (t.isNotEmpty) m[k] = t;
+    }
+    put('registration_number', _regCtrl.text);
+    put('milage', _mileageCtrl.text);
+    m['milage_unit'] = _mileageUnit;
+    put('make', _makeCtrl.text);
+    put('model', _modelCtrl.text);
+    put('variant', _variantCtrl.text);
+    put('body_type', _bodyType);
+    put('fuel_type', _fuelType);
+    put('colour', _colour);
+    put('year', _vYear);
+    put('transmission', _transmission);
+    put('engine_size', _engineCtrl.text);
+    put('number_of_seats', _seatsCtrl.text);
+    put('number_of_doors', _doors);
+    put('battery_range', _batteryCtrl.text);
+    m['found'] = _vehFound == true ? 1 : 0;
+    // Greenlight badge: set only when the log book actually verified.
+    m['is_vefied'] = _verified == true ? 1 : 0;
+    return m;
+  }
+
+  // --- Photos --------------------------------------------------------------
+
+  Widget _photosSection() {
+    final hasError = _errPhotos != null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Photos (up to $_maxPhotos)',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        if (_photos.isEmpty)
+          InkWell(
+            onTap: _pickPhotos,
+            borderRadius: BorderRadius.circular(AppRadius.control),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 34),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(AppRadius.control),
+                border: Border.all(
+                  color: hasError ? AppColors.danger : AppColors.line,
+                  width: 1.4,
+                  style: BorderStyle.solid,
+                ),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.cloud_upload_outlined,
+                      size: 46,
+                      color: hasError ? AppColors.danger : AppColors.primary),
+                  const SizedBox(height: 10),
+                  const Text('Add Photos',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Text('Up to $_maxPhotos photos · .jpg, .png',
+                      style: const TextStyle(color: AppColors.slate)),
+                ],
+              ),
+            ),
+          )
+        else
+          GridView.count(
+            crossAxisCount: 3,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            children: [
+              for (var i = 0; i < _photos.length; i++) _photoTile(_photos[i], i),
+              if (_photos.length < _maxPhotos) _addPhotoTile(),
+            ],
+          ),
+        if (_photos.length >= _maxPhotos && _photoUpgradePlan != null)
+          _photoUpgradeCard(_photoUpgradePlan!),
+        if (hasError)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(_errPhotos!,
+                style: const TextStyle(color: AppColors.danger, fontSize: 12.5)),
+          ),
+        const SizedBox(height: 20),
       ],
     );
   }
 
   Widget _photoTile(_Photo p, int index) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(AppRadius.control),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -769,15 +1919,84 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
     );
   }
 
+  /// DoneDeal-style upsell shown when the current photo allowance is full and a
+  /// plan with more photos exists. Tapping it selects that plan.
+  Widget _photoUpgradeCard(Plan plan) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: InkWell(
+        onTap: () => _upgradeForPhotos(plan),
+        borderRadius: BorderRadius.circular(AppRadius.control),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(AppRadius.control),
+            border:
+                Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.add_photo_alternate_outlined,
+                  color: AppColors.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Need more photos?',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 14.5)),
+                    const SizedBox(height: 2),
+                    Text(
+                        'Upgrade to ${plan.name} — £${_money(plan.price)} for up to ${plan.photos} photos',
+                        style: const TextStyle(
+                            color: AppColors.slate,
+                            fontSize: 12.5,
+                            height: 1.3)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_right, color: AppColors.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _upgradeForPhotos(Plan plan) {
+    setState(() => _selectedPlan = plan);
+    _toast(
+        'Upgraded to ${plan.name} — you can now add up to ${plan.photos} photos');
+  }
+
+  /// Select a plan. If it allows fewer photos than the seller has already
+  /// added, trim the extras straight away and tell them — so downgrading to a
+  /// smaller plan can never leave photos on the ad that wouldn't publish.
+  void _selectPlan(Plan plan) {
+    final newMax = plan.photos;
+    final removed = _photos.length > newMax ? _photos.length - newMax : 0;
+    setState(() {
+      _selectedPlan = plan;
+      if (removed > 0) _photos.removeRange(newMax, _photos.length);
+    });
+    if (removed > 0) {
+      _toast('${plan.name} allows up to $newMax photos — removed the last '
+          '$removed photo${removed == 1 ? '' : 's'}.');
+    }
+  }
+
   Widget _addPhotoTile() {
     return InkWell(
       onTap: _pickPhotos,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(AppRadius.control),
       child: Container(
         decoration: BoxDecoration(
           color: AppColors.surface,
           border: Border.all(color: AppColors.line, width: 1.4),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadius.control),
         ),
         child: const Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -791,6 +2010,168 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
     );
   }
 
+  /// The "Scan with Larry" card at the top of the form: snap a photo and the
+  /// AI drafts the title, description and a rough price to edit before posting.
+  Widget _scanCard() {
+    return InkWell(
+      onTap: _scanning ? null : _startScan,
+      borderRadius: BorderRadius.circular(AppRadius.card),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.primary,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 42,
+              height: 42,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: _scanning
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.4, color: Colors.white))
+                      : const Icon(Icons.auto_awesome_rounded,
+                          color: Colors.white, size: 24),
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_scanning ? 'Larry is taking a look…' : 'Scan with Larry',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(
+                      _scanning
+                          ? 'Reading your photo and drafting the details.'
+                          : 'Snap a photo and I\'ll draft the title, description and a rough price for you.',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.9),
+                          fontSize: 12.5,
+                          height: 1.3)),
+                ],
+              ),
+            ),
+            if (!_scanning) ...[
+              const SizedBox(width: 8),
+              const Icon(Icons.photo_camera_rounded, color: Colors.white),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _startScan() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_rounded,
+                  color: AppColors.primary),
+              title: const Text('Take a photo'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _runScan(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded,
+                  color: AppColors.primary),
+              title: const Text('Choose from gallery'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _runScan(ImageSource.gallery);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Pick one photo, upload it (also adding it as the ad's photo) and let Larry
+  /// draft the listing from it. Fails softly — the seller can always type it in.
+  Future<void> _runScan(ImageSource source) async {
+    final picker = ImagePicker();
+    XFile? x;
+    try {
+      x = await picker.pickImage(
+          source: source, imageQuality: 82, maxWidth: 1600);
+    } catch (e) {
+      _toast('Could not open that — try the other option.');
+      return;
+    }
+    if (x == null) return;
+    final file = File(x.path);
+    setState(() => _scanning = true);
+    try {
+      final url = await widget.api.uploadPhoto(file);
+      // Reuse the same photo on the ad (already uploaded) if there's room.
+      if (_photos.length < _maxPhotos) {
+        final p = _Photo(localPath: x.path)
+          ..uploading = false
+          ..url = url;
+        setState(() {
+          _photos.add(p);
+          _errPhotos = null;
+        });
+      }
+      final result = await widget.api.scanItem(url);
+      if (!mounted) return;
+      if (result == null) {
+        _toast('Larry couldn\'t reach the scanner — just fill it in below.');
+      } else if (result.isEmpty) {
+        _toast(
+            'Larry couldn\'t quite make that out — try a clearer photo, or fill it in below.');
+      } else {
+        setState(() {
+          // A scan is an explicit request for Larry's draft, so refresh the
+          // fields with the latest result (this is what lets a re-scan of a
+          // different photo update the title/description). Only skip a field
+          // when the new scan didn't return that piece, so we never blank one.
+          if (result.title.trim().isNotEmpty) _titleCtrl.text = result.title;
+          if (result.description.trim().isNotEmpty) {
+            _descCtrl.text = result.description;
+          }
+          if (result.price != null) {
+            _priceCtrl.text = '${result.price}';
+            _poa = false;
+          }
+          _errTitle = _errDesc = _errPrice = null;
+        });
+        final note = result.priceNote.trim();
+        _toast(
+            'Larry filled in the details — have a read and tweak anything.${note.isEmpty ? '' : ' $note'}');
+      }
+    } catch (e) {
+      if (mounted) {
+        _toast('Larry couldn\'t scan that — just fill it in below.');
+      }
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
+  }
+
   Future<void> _pickPhotos() async {
     final picker = ImagePicker();
     final remaining = _maxPhotos - _photos.length;
@@ -800,7 +2181,10 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
       if (picked.isEmpty) return;
       for (final x in picked.take(remaining)) {
         final photo = _Photo(localPath: x.path);
-        setState(() => _photos.add(photo));
+        setState(() {
+          _photos.add(photo);
+          _errPhotos = null;
+        });
         _uploadPhoto(photo, File(x.path));
       }
     } catch (e) {
@@ -826,165 +2210,141 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
     }
   }
 
-  // --- Step 3: Contact -----------------------------------------------------
+  // --- Publish bar ---------------------------------------------------------
 
-  Widget _contactStep() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      children: [
-        _label('Your name'),
-        TextField(controller: _nameCtrl, decoration: _dec('Name buyers will see')),
-        const SizedBox(height: 14),
-        _label('Contact number'),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _countryPicker(),
-            const SizedBox(width: 10),
-            Expanded(
-              child: TextField(
-                controller: _phoneCtrl,
-                keyboardType: TextInputType.phone,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]')),
-                ],
-                onChanged: (v) {
-                  if (_flagLocked || _country.dial == '353') return;
-                  final c = detectUkOrManx(v);
-                  if (c != null && c.iso != _country.iso) {
-                    setState(() => _country = c);
-                  }
-                },
-                decoration: _dec(_country.hint),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        _label('Location'),
-        DropdownButtonFormField<String>(
-          initialValue: _location,
-          isExpanded: true,
-          decoration: _dec('Choose a town'),
-          items: [
-            for (final t in _imTowns)
-              DropdownMenuItem(value: t, child: Text(t)),
-          ],
-          onChanged: (v) => setState(() => _location = v),
-        ),
-        const SizedBox(height: 20),
-        const Text('How can buyers reach you?',
-            style: TextStyle(fontWeight: FontWeight.w700)),
-        CheckboxListTile(
-          contentPadding: EdgeInsets.zero,
-          value: _allowCall,
-          onChanged: (v) => setState(() => _allowCall = v ?? false),
-          title: const Text('Phone call'),
-          controlAffinity: ListTileControlAffinity.leading,
-        ),
-        CheckboxListTile(
-          contentPadding: EdgeInsets.zero,
-          value: _allowMessage,
-          onChanged: (v) => setState(() => _allowMessage = v ?? false),
-          title: const Text('Message through List it'),
-          controlAffinity: ListTileControlAffinity.leading,
-        ),
-      ],
-    );
-  }
-
-  // --- Step 4: Review ------------------------------------------------------
-
-  Widget _reviewStep() {
-    final price = _poa
-        ? 'Contact for price'
-        : (_priceCtrl.text.trim().isEmpty ? 'Free' : '£${_priceCtrl.text.trim()}');
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      children: [
-        if (_photos.isNotEmpty)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: AspectRatio(
-              aspectRatio: 16 / 10,
-              child: _photos.first.url.isNotEmpty
-                  ? NetworkPhoto(url: _photos.first.url, fit: BoxFit.cover)
-                  : Image.file(File(_photos.first.localPath), fit: BoxFit.cover),
-            ),
-          ),
-        const SizedBox(height: 14),
-        Text(_titleCtrl.text.trim(),
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 4),
-        Text(price,
-            style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: AppColors.primary)),
-        const SizedBox(height: 14),
-        _reviewRow('Category', _catPath.map((c) => c.name).join(' › ')),
-        _reviewRow('Type', _adType == 1 ? 'For sale' : 'Wanted'),
-        _reviewRow('Location', _location ?? '—'),
-        _reviewRow('Photos', '${_photos.length}'),
-        _reviewRow('Contact', _nameCtrl.text.trim()),
-        const SizedBox(height: 12),
-        const Divider(),
-        Text(_descCtrl.text.trim(),
-            style: const TextStyle(color: AppColors.slate, height: 1.4)),
-        const SizedBox(height: 18),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.verified_outlined, color: AppColors.success),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  '${_plan?.name ?? 'Lite'} plan — Free · live for ${_plan?.days ?? 360} days',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _reviewRow(String k, String v) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-              width: 92,
-              child: Text(k,
-                  style: const TextStyle(
-                      color: AppColors.muted, fontWeight: FontWeight.w600))),
-          Expanded(
-              child: Text(v, style: const TextStyle(fontWeight: FontWeight.w600))),
-        ],
+  Widget _publishBar() {
+    return SizedBox(
+      width: double.infinity,
+      height: 54,
+      child: ElevatedButton(
+        onPressed: _publishing ? null : _submit,
+        child: _publishing
+            ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
+              )
+            : Text(_planPrice == 0
+                ? 'Place ad'
+                : 'Place ad — £${_money(_activePlan!.price)}'),
       ),
     );
   }
 
   // --- shared bits ---------------------------------------------------------
 
-  Widget _label(String t) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(t, style: const TextStyle(fontWeight: FontWeight.w700)),
+  /// A labelled form block: a bold label (with an optional trailing widget such
+  /// as the "Verified" badge) above the field, then 14px of breathing room.
+  Widget _field(String label, Widget child, {Widget? trailing}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(label,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700, fontSize: 15)),
+            const Spacer(),
+            ?trailing,
+          ],
+        ),
+        const SizedBox(height: 6),
+        child,
+        const SizedBox(height: 14),
+      ],
+    );
+  }
+
+  Widget _sectionLabel(String t) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(t,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
       );
+
+  Widget _radio(String label, int value) {
+    final selected = _adType == value;
+    return Expanded(
+      child: InkWell(
+        onTap: () => setState(() => _adType = value),
+        borderRadius: BorderRadius.circular(AppRadius.control),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+          decoration: BoxDecoration(
+            color: selected
+                ? AppColors.primary.withValues(alpha: 0.06)
+                : Colors.white,
+            border: Border.all(
+                color: selected ? AppColors.primary : AppColors.line,
+                width: 1.4),
+            borderRadius: BorderRadius.circular(AppRadius.control),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                selected
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                color: selected ? AppColors.primary : AppColors.muted,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(label,
+                  style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: selected ? AppColors.primary : AppColors.slate)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A bordered "allow contact by" row: label on the left, a blue tick box on
+  /// the right, matching DoneDeal's contact cards.
+  Widget _contactCard(String label, bool value, ValueChanged<bool> onChanged) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      borderRadius: BorderRadius.circular(AppRadius.control),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: AppColors.line),
+          borderRadius: BorderRadius.circular(AppRadius.control),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(label,
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600)),
+            ),
+            Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: value ? AppColors.primary : Colors.white,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                    color: value ? AppColors.primary : AppColors.muted,
+                    width: 1.6),
+              ),
+              child: value
+                  ? const Icon(Icons.check, color: Colors.white, size: 18)
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   /// Flag + dial-code button that opens the country sheet. Isle of Man and the
   /// UK both dial +44, so the flag is how the seller (and buyers) tell them
   /// apart.
   Widget _countryPicker() => InkWell(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppRadius.control),
         onTap: _pickCountry,
         child: Container(
           height: 54,
@@ -992,7 +2352,7 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
           decoration: BoxDecoration(
             color: AppColors.surface,
             border: Border.all(color: AppColors.line),
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(AppRadius.control),
           ),
           child: Row(
             children: [
@@ -1019,7 +2379,7 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text('Country',
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
               ),
             ),
             for (final c in kPhoneCountries)
@@ -1042,27 +2402,55 @@ class _PlaceAdWizardState extends State<_PlaceAdWizard> {
     }
   }
 
-  InputDecoration _dec(String hint) => InputDecoration(
+  InputDecoration _dec(String hint, {String? error, bool filled = false}) {
+    // As a field is completed its outline darkens from light grey to a clear
+    // dark grey, so a seller can see at a glance what's still to fill in.
+    final restColor = filled ? AppColors.muted : AppColors.line;
+    final restWidth = filled ? 1.4 : 1.0;
+    return InputDecoration(
         hintText: hint,
+        errorText: error,
         filled: true,
         fillColor: AppColors.surface,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.line),
+          borderRadius: BorderRadius.circular(AppRadius.control),
+          borderSide: BorderSide(color: restColor, width: restWidth),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.line),
+          borderRadius: BorderRadius.circular(AppRadius.control),
+          borderSide: BorderSide(color: restColor, width: restWidth),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadius.control),
           borderSide: const BorderSide(color: AppColors.primary, width: 1.4),
         ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.control),
+          borderSide: const BorderSide(color: AppColors.danger, width: 1.4),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.control),
+          borderSide: const BorderSide(color: AppColors.danger, width: 1.6),
+        ),
       );
+  }
 }
 
 /// A single photo being added: local file path plus its hosted URL once the
 /// Cloudinary upload completes.
+/// Forces a field to upper case as the user types (number plates are always
+/// capitals). Keeps the caret where it was so typing feels natural.
+class _UpperCaseTextFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    return TextEditingValue(
+      text: newValue.text.toUpperCase(),
+      selection: newValue.selection,
+    );
+  }
+}
+
 class _Photo {
   final String localPath;
   String url;
@@ -1072,66 +2460,6 @@ class _Photo {
       : url = '',
         uploading = true,
         failed = false;
-}
-
-class _StepBar extends StatelessWidget {
-  final List<String> steps;
-  final int current;
-  const _StepBar({required this.steps, required this.current});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.line)),
-      ),
-      child: Row(
-        children: [
-          for (var i = 0; i < steps.length; i++) ...[
-            _dot(i),
-            if (i < steps.length - 1)
-              Expanded(
-                child: Container(
-                  height: 2,
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  color: i < current ? AppColors.primary : AppColors.line,
-                ),
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _dot(int i) {
-    final done = i < current;
-    final active = i == current;
-    final color = done || active ? AppColors.primary : AppColors.line;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          height: 26,
-          width: 26,
-          decoration: BoxDecoration(
-            color: done ? AppColors.primary : Colors.white,
-            border: Border.all(color: color, width: 2),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: done
-                ? const Icon(Icons.check, size: 15, color: Colors.white)
-                : Text('${i + 1}',
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: active ? AppColors.primary : AppColors.muted)),
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 class _ErrorState extends StatelessWidget {
