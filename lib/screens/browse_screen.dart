@@ -708,6 +708,36 @@ class _CatStyle {
 
 const _CatStyle _fallbackStyle = _CatStyle(Icons.category_rounded, AppColors.primary);
 
+/// Sections that ship with their own illustration (`assets/cat/<slug>.png`).
+/// Drawn objects rather than flat glyphs, which is what a buyer scanning a
+/// classifieds home screen recognises fastest. Anything not listed here falls
+/// back to the website's own category image, then to the flat icon, so adding a
+/// new section never leaves a blank tile.
+const Set<String> _catArt = {
+  'property',
+  'cars-and-motors',
+  'electronics',
+  'house-and-diy',
+  'sports-and-hobbies',
+  'clothes-and-lifestyle',
+  'baby-and-kids',
+  'animals',
+  'music-and-education',
+  'services',
+  'free-stuff',
+  'whats-on',
+  'weird-and-wonderful',
+  'business',
+  'farming',
+  'holidays-and-tickets',
+  'lost-and-found',
+  'jobs',
+  'everything',
+};
+
+String? _catArtFor(String slug) =>
+    _catArt.contains(slug) ? 'assets/cat/$slug.png' : null;
+
 _CatStyle _styleFor(String slug) {
   switch (slug) {
     case 'property':
@@ -865,7 +895,9 @@ class _CategoryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = _styleFor(category.slug);
-    final useImage = style == _fallbackStyle && category.imageUrl.isNotEmpty;
+    final art = _catArtFor(category.slug);
+    final useImage =
+        art == null && style == _fallbackStyle && category.imageUrl.isNotEmpty;
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -876,21 +908,28 @@ class _CategoryRow extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 40,
-              height: 40,
+              // 46 rather than 40: the section art is a drawn object, and at
+              // 40 the detail turned to mush.
+              width: 46,
+              height: 46,
               decoration: BoxDecoration(
                 color: style.color.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(AppRadius.image),
               ),
               alignment: Alignment.center,
               clipBehavior: Clip.antiAlias,
-              child: useImage
+              child: art != null
                   ? Padding(
-                      padding: const EdgeInsets.all(7),
-                      child: NetworkPhoto(
-                          url: category.imageUrl, fit: BoxFit.contain),
+                      padding: const EdgeInsets.all(3),
+                      child: Image.asset(art, fit: BoxFit.contain),
                     )
-                  : Icon(style.icon, color: style.color, size: 21),
+                  : useImage
+                      ? Padding(
+                          padding: const EdgeInsets.all(7),
+                          child: NetworkPhoto(
+                              url: category.imageUrl, fit: BoxFit.contain),
+                        )
+                      : Icon(style.icon, color: style.color, size: 23),
             ),
             const SizedBox(width: 12),
             // Name on the left, count on the right - the classifieds layout,

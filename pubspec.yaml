@@ -88,6 +88,7 @@ flutter:
     - assets/engine.png
     - assets/hero_farming.jpg
     - assets/vehicle_catalog.json
+    - assets/cat/
     - assets/flags/
 
   # Inter, the same typeface as the website, the CRM and the admin panel.
