@@ -913,16 +913,17 @@ class _CategoryRow extends StatelessWidget {
               width: 46,
               height: 46,
               decoration: BoxDecoration(
-                color: style.color.withValues(alpha: 0.10),
+                // Photographic section art sits straight on the row, with no
+                // tinted tile behind it. The tile stays behind the flat
+                // fallback icons, which need the backing to read.
+                color:
+                    art != null ? null : style.color.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(AppRadius.image),
               ),
               alignment: Alignment.center,
               clipBehavior: Clip.antiAlias,
               child: art != null
-                  ? Padding(
-                      padding: const EdgeInsets.all(3),
-                      child: Image.asset(art, fit: BoxFit.contain),
-                    )
+                  ? Image.asset(art, fit: BoxFit.contain)
                   : useImage
                       ? Padding(
                           padding: const EdgeInsets.all(7),
