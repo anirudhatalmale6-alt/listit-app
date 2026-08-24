@@ -9,6 +9,25 @@ class AppColors {
 
   static const Color primary = Color(0xFF007BFF);
   static const Color primaryDark = Color(0xFF0056D6);
+
+  // The website's home banner, sampled from the live site so the app opens on
+  // the same colours a visitor sees at listit.im on a phone.
+  /// The deep navy the site's hero sits on.
+  static const Color navy = Color(0xFF132740);
+
+  /// The lighter blue the site uses for the active section tab and its
+  /// underline - deliberately brighter than `primary`, which disappears
+  /// against the navy.
+  static const Color heroBlue = Color(0xFF4CA7FF);
+
+  /// The site's search button - a stronger blue than `primary`.
+  static const Color cta = Color(0xFF0057FF);
+
+  /// The orange section badge beside the logo.
+  static const Color badge = Color(0xFFF77C00);
+
+  /// The near-white the site puts behind everything under the hero.
+  static const Color page = Color(0xFFFAFAFA);
   static const Color slate = Color(0xFF506066);
   static const Color ink = Color(0xFF1B2430);
   static const Color muted = Color(0xFF8792A0);
@@ -76,7 +95,6 @@ class AppTheme {
         primary: AppColors.primary,
       ),
       scaffoldBackgroundColor: Colors.white,
-      fontFamily: 'Inter',
     );
 
     return base.copyWith(

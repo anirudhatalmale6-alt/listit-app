@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/category.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/recent_searches.dart';
 import '../services/site_settings.dart';
 import '../theme.dart';
 import '../widgets/featured_dealers_strip.dart';
 import '../widgets/network_photo.dart';
 import '../widgets/vehicle_search_panel.dart';
 import 'auth/auth_screen.dart';
-import 'recently_viewed_screen.dart';
 import 'results_screen.dart';
 import 'saved_searches_screen.dart';
 import 'search_screen.dart';
@@ -54,25 +55,35 @@ class BrowseScreen extends StatefulWidget {
 }
 
 class _BrowseScreenState extends State<BrowseScreen> {
-  // The two sections that get their own top tab (Cars & Motors and Property);
-  // everything else lives under "Marketplace".
+  // The sections that get their own top tab (Cars & Motors, Property and
+  // Farming); everything else lives under "Marketplace".
   static const int _carsCatId = 62;
   static const int _propertyCatId = 106;
+  static const int _farmingCatId = 100;
   // The Cars For Sale leaf (a vehicle section) that the car-search panel runs
   // against, so make/year/price resolve through the backend's vehicle filter.
   static const int _carsForSaleCatId = 89;
 
   late Future<List<Category>> _future;
   List<Category> _all = const [];
-  // 0 = Cars & Motors, 1 = Marketplace (default), 2 = Property.
+  // 0 = Cars & Motors, 1 = Marketplace (default), 2 = Property, 3 = Farming.
   int _tab = 1;
 
   final TextEditingController _search = TextEditingController();
+
+  /// The area the hero search is limited to. `null` is the website's default,
+  /// "All areas in the Isle of Man".
+  String? _location;
 
   // Live "currently listed" count per category id, matching exactly what the
   // website shows. The category feed carries a broader all-time figure, so we
   // fetch the real live totals separately and fill each row in as they land.
   final Map<int, int> _liveCounts = {};
+
+  // The two rows under the search box: the last thing they searched for
+  // on this device, and how many searches they have saved.
+  String? _lastSearch;
+  int _savedCount = 0;
 
   @override
   void initState() {
@@ -83,6 +94,30 @@ class _BrowseScreenState extends State<BrowseScreen> {
       setState(() => _all = all);
       _loadCounts(_visibleCats);
     });
+    _loadShortcuts();
+  }
+
+  /// Coming back from a search or a sign-in changes both shortcut rows, so they
+  /// are refreshed whenever this screen is shown again, not only on start.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _loadShortcuts();
+  }
+
+  /// Run a keyword search the way the search screen does - same filter key, so
+  /// a tap on the last search lands exactly where it originally did.
+  void _runSearch(String term) {
+    Navigator.of(context)
+        .push(MaterialPageRoute(
+          builder: (_) => ResultsScreen(
+            api: widget.api,
+            auth: widget.auth,
+            baseFilters: {..._sectionBase, 'keyword': term},
+            titleOverride: term,
+          ),
+        ))
+        .then((_) => _loadShortcuts());
   }
 
   // --- Section tabs ---------------------------------------------------------
@@ -113,6 +148,8 @@ class _BrowseScreenState extends State<BrowseScreen> {
         return _childrenOf(_carsCatId);
       case 2:
         return _childrenOf(_propertyCatId);
+      case 3:
+        return _childrenOf(_farmingCatId);
       default:
         return _topLevel;
     }
@@ -125,6 +162,8 @@ class _BrowseScreenState extends State<BrowseScreen> {
         return _catById(_carsCatId);
       case 2:
         return _catById(_propertyCatId);
+      case 3:
+        return _catById(_farmingCatId);
       default:
         return null;
     }
@@ -134,22 +173,40 @@ class _BrowseScreenState extends State<BrowseScreen> {
   /// dealers, agents and businesses alike), so no seller filter is applied.
   Map<String, dynamic> get _sectionBase => const {};
 
-  String get _searchHint => _scope == null
-      ? 'Search cars, property, jobs, furniture...'
-      : 'Search ${sectionLabel(_scope!.name)}';
-
-  String get _sectionHeading {
+  /// The short section name the website puts in the orange badge beside the
+  /// logo, and in the search placeholder.
+  String get _sectionBadge {
     switch (_tab) {
       case 0:
-        return 'Browse Motor Mall';
+        return 'Motors';
       case 2:
-        return 'Browse Property';
+        return 'Property';
+      case 3:
+        return 'Farming';
       default:
-        // No "Browse the marketplace" heading - the categories lead straight
-        // in, like DoneDeal.
-        return '';
+        return 'Marketplace';
     }
   }
+
+  String get _searchHint => 'Search in $_sectionBadge';
+
+  /// The website's blue button label. It says "Motor Mall" even though the tab
+  /// above it says "Motors" - both spellings are the site's own.
+  String get _searchButtonLabel {
+    switch (_tab) {
+      case 0:
+        return 'Search Motor Mall';
+      case 2:
+        return 'Search Property';
+      case 3:
+        return 'Search Farming';
+      default:
+        return 'Search Marketplace';
+    }
+  }
+
+  /// The heading over the category grid - the website's wording, on every tab.
+  String get _sectionHeading => 'Explore Some Of Our Popular Categories';
 
   void _setTab(int i) {
     if (i == _tab) return;
@@ -194,6 +251,13 @@ class _BrowseScreenState extends State<BrowseScreen> {
   }
 
   void _openCategory(Category c) {
+    // Farming lost its tab, so its row is the way into the mall - the fifteen
+    // subsections - rather than into every farming ad at once. Same behaviour
+    // as the Farming tile on the website.
+    if (c.id == _farmingCatId) {
+      _setTab(3);
+      return;
+    }
     // Tapping a section drops you straight into all its ads (newest first),
     // exactly like DoneDeal - narrow down from there with Filter.
     Navigator.of(context).push(
@@ -209,8 +273,14 @@ class _BrowseScreenState extends State<BrowseScreen> {
     );
   }
 
-  /// A clean white top bar with the blue Listit logo (like the website header),
-  /// carrying the log-in button / account avatar.
+  /// The website's header, on the same navy: the blue Listit logo, the orange
+  /// badge naming the section you are in, then the search magnifier and the
+  /// log-in button / account avatar.
+  ///
+  /// This band does not scroll. The site's does, but the app draws behind the
+  /// status bar, and a scrolling navy bar would slide white listings under a
+  /// clock that has been set to white - so it stays put and the rest of the
+  /// hero scrolls under it.
   Widget _topBar() {
     // padding.top is zeroed if an ancestor has already consumed it, which left
     // the logo sitting under the clock on some handsets. viewPadding always
@@ -218,45 +288,64 @@ class _BrowseScreenState extends State<BrowseScreen> {
     final mq = MediaQuery.of(context);
     final topPad = mq.padding.top > 0 ? mq.padding.top : mq.viewPadding.top;
     return Container(
-      // A plain white bar with a hairline under it, the height of a normal
-      // app bar - not a floating panel.
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: AppColors.line)),
-      ),
-      padding: EdgeInsets.fromLTRB(16, topPad + 9, 16, 9),
+      color: AppColors.navy,
+      padding: EdgeInsets.fromLTRB(16, topPad + 10, 16, 10),
       child: Row(
         children: [
-          Image.asset(
-            'assets/listit_logo.png',
-            height: 28,
-            fit: BoxFit.contain,
-            filterQuality: FilterQuality.high,
-            // Dark-on-transparent logo tinted to the brand blue for the white bar.
-            color: AppColors.primary,
-            colorBlendMode: BlendMode.srcIn,
+          // Logo and badge shrink together rather than the badge clipping its
+          // own word: "Market..." beside the logo is worse than a slightly
+          // smaller logo on a narrow handset.
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Image.asset(
+                    'assets/listit_logo.png',
+                    height: 28,
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.high,
+                    // Dark-on-transparent logo tinted to the brand blue,
+                    // exactly as the site draws it over the navy.
+                    color: AppColors.primary,
+                    colorBlendMode: BlendMode.srcIn,
+                  ),
+                  const SizedBox(width: 10),
+                  _sectionBadgePill(),
+                ],
+              ),
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
+          IconButton(
+            onPressed: _openSearch,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            icon: const Icon(Icons.search, color: Colors.white, size: 26),
+            tooltip: 'Search',
+          ),
+          const SizedBox(width: 6),
           ListenableBuilder(
             listenable: widget.auth,
             builder: (context, _) {
               if (!widget.auth.isLoggedIn) {
-                return OutlinedButton(
-                  onPressed: _openAuth,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                    side: const BorderSide(color: AppColors.primary),
+                // Plain words, not a pill. DoneDeal's top-right action is
+                // set the same way and an outlined blue button beside a logo
+                // is the thing that reads as a template.
+                return InkWell(
+                  onTap: _openAuth,
+                  child: const Padding(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                    shape: RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(AppRadius.control)),
-                    textStyle: const TextStyle(
-                        fontSize: AppText.body, fontWeight: FontWeight.w600),
-                    minimumSize: const Size(0, 0),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                    child: Text('Log in',
+                        style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white)),
                   ),
-                  child: const Text('Log in'),
                 );
               }
               final u = widget.auth.user!;
@@ -309,25 +398,39 @@ class _BrowseScreenState extends State<BrowseScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: RefreshIndicator(
-        color: AppColors.primary,
-        onRefresh: () async => _reload(),
-        child: CustomScrollView(
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      // The header behind the clock is navy now, so the clock and the signal
+      // bars have to be drawn white or they vanish into it.
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      child: Scaffold(
+        backgroundColor: AppColors.page,
+        body: Column(
+          children: [
+            _topBar(),
+            Expanded(child: _pageBody()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pageBody() {
+    return RefreshIndicator(
+      color: AppColors.primary,
+      onRefresh: () async => _reload(),
+      child: CustomScrollView(
           slivers: [
-            SliverToBoxAdapter(child: _topBar()),
-            // A slim photo band carrying the tagline - enough to say what
-            // Listit is, not enough to push the marketplace off the screen.
-            SliverToBoxAdapter(child: _Hero(tab: _tab)),
-            // Section switch, then the search box scoped by it. Tabs sit above
-            // the box because the tab decides what the box searches.
-            SliverToBoxAdapter(child: _sectionTabs()),
-            SliverToBoxAdapter(child: _searchBar()),
+            // The section switch, the search box, the area and the blue
+            // Search button, all on the navy - the website's hero.
+            SliverToBoxAdapter(child: _heroBlock()),
             // The car-search block leads the Motor Mall tab, sitting right
             // under the search so its Search button is easy to reach.
             SliverToBoxAdapter(child: _vehicleSearchPanel()),
-            SliverToBoxAdapter(child: _quickLinks()),
+            SliverToBoxAdapter(child: _searchShortcuts()),
             // Discover is the one thing the island's other marketplaces don't
             // have, so it stays high on the page - but as a marketplace
             // feature, not a banner.
@@ -341,21 +444,170 @@ class _BrowseScreenState extends State<BrowseScreen> {
             const SliverToBoxAdapter(child: SizedBox(height: 16)),
           ],
         ),
-      ),
     );
   }
 
-  /// The section switch: Cars & Motors, the general Marketplace, or Property.
-  /// The active tab drives the category list below and what the search box
-  /// looks in. Plain tabs with an underline on the active one - a navigation
-  /// control, not a floating card.
-  Widget _sectionTabs() {
-    const labels = ['Motor Mall', 'Marketplace', 'Property'];
+  /// "My Last Search" and "Saved Searches", the two rows DoneDeal puts directly
+  /// under the search box. Both were already in the app - the last search is
+  /// recorded on the device every time one is run, and the saved-searches
+  /// screen was reachable only from Profile - so this is wiring, not new work.
+  ///
+  /// The last-search row is left out entirely until there is one, rather than
+  /// sitting there empty on a new install.
+  Widget _searchShortcuts() {
+    final rows = <Widget>[];
+
+    if (_lastSearch != null && _lastSearch!.isNotEmpty) {
+      rows.add(InkWell(
+        onTap: () => _runSearch(_lastSearch!),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Row(
+            children: [
+              const Icon(Icons.schedule_rounded,
+                  size: 20, color: AppColors.muted),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('My Last Search',
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.ink)),
+                    const SizedBox(height: 2),
+                    Text(_lastSearch!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 14.5, color: AppColors.slate)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ));
+    }
+
+    rows.add(InkWell(
+      onTap: _openSavedSearches,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 13, 16, 13),
+        child: Row(
+          children: [
+            const Icon(Icons.star_rounded, size: 22, color: Color(0xFFF5C518)),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text('Saved Searches',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.ink)),
+            ),
+            Text('$_savedCount',
+                style: const TextStyle(fontSize: 16, color: AppColors.slate)),
+          ],
+        ),
+      ),
+    ));
+
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
         border: Border(bottom: BorderSide(color: AppColors.line)),
       ),
+      child: Column(children: rows),
+    );
+  }
+
+  void _openSavedSearches() {
+    Navigator.of(context)
+        .push(MaterialPageRoute(
+          builder: (_) =>
+              SavedSearchesScreen(api: widget.api, auth: widget.auth),
+        ))
+        // The count changes if they delete one while they are in there.
+        .then((_) => _loadShortcuts());
+  }
+
+  Future<void> _loadShortcuts() async {
+    final recent = await RecentSearches.load();
+    var saved = 0;
+    if (widget.auth.isLoggedIn) {
+      try {
+        final list =
+            await widget.api.listSavedSearches(userId: widget.auth.user!.id);
+        saved = list.length;
+      } catch (_) {/* a dead network should not blank the home screen */}
+    }
+    if (!mounted) return;
+    setState(() {
+      _lastSearch = recent.isEmpty ? null : recent.first;
+      _savedCount = saved;
+    });
+  }
+
+  /// The orange badge beside the logo, naming the section you are in.
+  Widget _sectionBadgePill() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.badge,
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+      ),
+      child: Text(
+        _sectionBadge,
+        maxLines: 1,
+        softWrap: false,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 14.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  /// The website's hero, one for one: the section tabs, a search box, the area
+  /// selector and the blue Search button, all sitting on the navy with the
+  /// banner photo bleeding in from the right.
+  Widget _heroBlock() {
+    return Stack(
+      children: [
+        Positioned.fill(child: _Hero(tab: _tab)),
+        Column(
+          children: [
+            _sectionTabs(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 22),
+              child: Column(
+                children: [
+                  _searchBar(),
+                  const SizedBox(height: 12),
+                  _locationBar(),
+                  const SizedBox(height: 16),
+                  _searchButton(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// The section switch: Motors, the general Marketplace, or Property. The
+  /// active tab drives the category grid below and what the search box looks
+  /// in. White words on the navy, the live one in the site's lighter blue with
+  /// a rounded underline.
+  Widget _sectionTabs() {
+    // Farming is still a section in the Marketplace grid; it just no
+    // longer takes a quarter of the header.
+    const labels = ['Motors', 'Marketplace', 'Property'];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 2, 8, 4),
       child: Row(
         children: [
           for (var i = 0; i < labels.length; i++)
@@ -367,123 +619,241 @@ class _BrowseScreenState extends State<BrowseScreen> {
 
   Widget _tabItem(String label, int i) {
     final active = i == _tab;
+    final style = TextStyle(
+      color: active ? AppColors.heroBlue : Colors.white,
+      // A ceiling, not a promise: the FittedBox below scales this down on a
+      // narrow screen or a large system font.
+      fontSize: 21,
+      fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+    );
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => _setTab(i),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(
-              color: active ? AppColors.primary : Colors.transparent,
-              width: 2.5,
-            ),
-          ),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: active ? AppColors.ink : AppColors.slate,
-            fontSize: AppText.body,
-            fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _searchBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      child: TextField(
-        controller: _search,
-        readOnly: true,
-        onTap: _openSearch,
-        decoration: InputDecoration(
-          hintText: _searchHint,
-          prefixIcon: const Icon(Icons.search, color: AppColors.slate, size: 20),
-          prefixIconConstraints:
-              const BoxConstraints(minWidth: 40, minHeight: 40),
-          isDense: true,
-        ),
-      ),
-    );
-  }
-
-  /// Recently Viewed and Saved Searches as one compact row rather than two
-  /// large cards - useful, but not worth a third of the first screen.
-  Widget _quickLinks() {
-    return Container(
-      decoration: const BoxDecoration(
-        border: Border(
-          top: BorderSide(color: AppColors.line),
-          bottom: BorderSide(color: AppColors.line),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _quickLink(
-              icon: Icons.history_rounded,
-              label: 'Recently Viewed',
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => RecentlyViewedScreen(api: widget.api),
-              )),
-            ),
-          ),
-          const SizedBox(
-            height: 22,
-            child: VerticalDivider(width: 1, color: AppColors.line),
-          ),
-          Expanded(
-            child: _quickLink(
-              icon: Icons.bookmark_border_rounded,
-              label: 'Saved Searches',
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) =>
-                    SavedSearchesScreen(api: widget.api, auth: widget.auth),
-              )),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _quickLink({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: AppColors.slate, size: 17),
-            const SizedBox(width: 7),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: AppText.meta,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.ink,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // The underline is the width of the word, not the width of the
+            // tab - a bar running the full third of the screen under "Motors"
+            // reads as a selected block rather than as the site's underline.
+            final painter = TextPainter(
+              text: TextSpan(text: label, style: style),
+              textDirection: TextDirection.ltr,
+              textScaler: MediaQuery.textScalerOf(context),
+            )..layout();
+            final barWidth = painter.width.clamp(0.0, constraints.maxWidth);
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 10),
+                // The width has to be tight for BoxFit.scaleDown to do
+                // anything - with the loose constraints a Container
+                // `alignment` hands down, the box sized itself to the text and
+                // the label overflowed into its neighbour.
+                SizedBox(
+                  width: double.infinity,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.center,
+                    child: Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      style: style,
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 7),
+                Container(
+                  width: barWidth,
+                  height: 3,
+                  decoration: BoxDecoration(
+                    color: active ? AppColors.heroBlue : Colors.transparent,
+                    borderRadius: BorderRadius.circular(AppRadius.pill),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  /// The white search box. Unlike the old one this types in place, so the
+  /// Search button under it has something to run - the magnifier in the header
+  /// is still the way to the full search screen with suggestions and history.
+  Widget _searchBar() {
+    return TextField(
+      controller: _search,
+      textInputAction: TextInputAction.search,
+      onSubmitted: (_) => _runHeroSearch(),
+      style: const TextStyle(fontSize: 16, color: AppColors.ink),
+      decoration: InputDecoration(
+        hintText: _searchHint,
+        hintStyle: const TextStyle(color: AppColors.muted, fontSize: 16),
+        prefixIcon: const Icon(Icons.search, color: AppColors.slate, size: 22),
+        prefixIconConstraints:
+            const BoxConstraints(minWidth: 46, minHeight: 46),
+        contentPadding: const EdgeInsets.symmetric(vertical: 15),
+        border: _heroFieldBorder,
+        enabledBorder: _heroFieldBorder,
+        focusedBorder: _heroFieldBorder,
+      ),
+    );
+  }
+
+  /// White field, no visible border - the site's hero inputs have none, and a
+  /// grey hairline on white over navy reads as a mistake.
+  static final OutlineInputBorder _heroFieldBorder = OutlineInputBorder(
+    borderRadius: BorderRadius.circular(AppRadius.control),
+    borderSide: BorderSide.none,
+  );
+
+  /// "All areas in the Isle of Man", the website's second hero field. Opens the
+  /// island's towns in a sheet.
+  Widget _locationBar() {
+    final chosen = _location;
+    return InkWell(
+      onTap: _pickLocation,
+      borderRadius: BorderRadius.circular(AppRadius.control),
+      child: Container(
+        height: 52,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppRadius.control),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: chosen == null
+                  ? const Text.rich(
+                      TextSpan(
+                        text: 'All areas in the ',
+                        children: [
+                          TextSpan(
+                            text: 'Isle of Man',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 16, color: AppColors.ink),
+                    )
+                  : Text(
+                      chosen,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.ink),
+                    ),
             ),
+            const Icon(Icons.arrow_drop_down, color: AppColors.slate),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _pickLocation() async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text('Area',
+                    style: TextStyle(
+                        fontSize: AppText.section,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.ink)),
+              ),
+              ListTile(
+                title: const Text('All areas in the Isle of Man'),
+                // An empty string is the sheet's way of saying "clear it" -
+                // returning null is what a dismissed sheet gives back, and the
+                // two must not mean the same thing.
+                onTap: () => Navigator.of(sheetContext).pop(''),
+              ),
+              for (final town in kImTowns)
+                ListTile(
+                  title: Text(town),
+                  onTap: () => Navigator.of(sheetContext).pop(town),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _location = picked.isEmpty ? null : picked);
+  }
+
+  /// The big blue button. Runs whatever the two fields above it say.
+  Widget _searchButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 54,
+      child: ElevatedButton(
+        onPressed: _runHeroSearch,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.cta,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.control),
+          ),
+        ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            _searchButtonLabel,
+            maxLines: 1,
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Runs the hero: whatever was typed, inside the section the tabs are on,
+  /// limited to the chosen area. An empty box with an area picked is a valid
+  /// search - "everything in Ramsey" - so nothing here is required.
+  void _runHeroSearch() {
+    FocusScope.of(context).unfocus();
+    final term = _search.text.trim();
+    final filters = <String, dynamic>{..._sectionBase};
+    if (term.isNotEmpty) filters['keyword'] = term;
+    if (_location != null) filters['location'] = _location;
+    if (term.isNotEmpty) RecentSearches.add(term);
+
+    final scope = _scope;
+    final title = term.isNotEmpty
+        ? term
+        : _location ?? (scope == null ? 'Marketplace' : sectionLabel(scope.name));
+
+    Navigator.of(context)
+        .push(MaterialPageRoute(
+          builder: (_) => ResultsScreen(
+            api: widget.api,
+            auth: widget.auth,
+            category: scope,
+            baseFilters: filters,
+            titleOverride: title,
+          ),
+        ))
+        .then((_) => _loadShortcuts());
   }
 
   /// The DoneDeal-style car-search block - only on the Cars & Motors tab, and
@@ -501,9 +871,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
   }
 
   /// A single Featured Dealer banner (rotating hourly) on the Cars & Motors and
-  /// Marketplace tabs. Farming has no dealer sector, so it doesn't appear there.
+  /// Marketplace tabs. Neither Property nor Farming has a dealer sector behind
+  /// it, so it stays off both.
   Widget _featuredDealers() {
-    if (_tab == 2) return const SizedBox.shrink();
+    if (_tab == 2 || _tab == 3) return const SizedBox.shrink();
     return FeaturedDealersStrip(
       key: const ValueKey('featured-motors'),
       api: widget.api,
@@ -520,14 +891,20 @@ class _BrowseScreenState extends State<BrowseScreen> {
     final label = _tab == 0
         ? 'See all in Motor Mall'
         : _tab == 2
-            ? 'See all in Farming'
-            : 'See all in Marketplace';
+            ? 'See all in Property'
+            : _tab == 3
+                ? 'See all in Farming'
+                : 'See all in Marketplace';
     return InkWell(
       onTap: _openSeeAll,
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 13, 16, 13),
         decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: AppColors.line)),
+          color: Colors.white,
+          border: Border(
+            top: BorderSide(color: AppColors.line),
+            bottom: BorderSide(color: AppColors.line),
+          ),
         ),
         child: Row(
           children: [
@@ -587,6 +964,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
   /// what swiping is. Nothing else on the island does swipe-to-browse, so it
   /// stays high on the page - it just no longer shouts.
   Widget _discoverBanner() {
+    // On Marketplace this row is the same journey as the Discover tab in the
+    // bottom bar, so it only earns its place on the scoped tabs.
+    if (_tab == 1) return const SizedBox.shrink();
     final scope = _scope;
     final subtitle = scope == null
         ? 'Swipe through everything on the island'
@@ -596,6 +976,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 11, 16, 11),
         decoration: const BoxDecoration(
+          color: Colors.white,
           border: Border(bottom: BorderSide(color: AppColors.line)),
         ),
         child: Row(
@@ -634,14 +1015,18 @@ class _BrowseScreenState extends State<BrowseScreen> {
     );
   }
 
+  /// The heading over the category grid, centred and large, the way the
+  /// website sets it.
   Widget _sectionLabel(String text) {
     if (text.isEmpty) return const SizedBox(height: 4);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+      padding: const EdgeInsets.fromLTRB(24, 26, 24, 18),
       child: Text(
         text,
+        textAlign: TextAlign.center,
         style: const TextStyle(
-          fontSize: AppText.section,
+          fontSize: 25,
+          height: 1.22,
           fontWeight: FontWeight.w700,
           color: AppColors.ink,
         ),
@@ -680,14 +1065,27 @@ class _BrowseScreenState extends State<BrowseScreen> {
           );
         }
         final cats = _visibleCats;
-        return SliverList(
-          delegate: SliverChildBuilderDelegate(
-            (context, i) => _CategoryRow(
-              category: cats[i],
-              liveCount: _liveCounts[cats[i].id],
-              onTap: () => _openCategory(cats[i]),
+        // Two to a row with the artwork on top, the way the website lays its
+        // categories out on a phone. `mainAxisExtent` rather than an aspect
+        // ratio: a fixed height cannot be overflowed by a long section name or
+        // a large system font the way a computed one can.
+        return SliverPadding(
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+          sliver: SliverGrid(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: 14,
+              crossAxisSpacing: 14,
+              mainAxisExtent: 186,
             ),
-            childCount: cats.length,
+            delegate: SliverChildBuilderDelegate(
+              (context, i) => _CategoryCard(
+                category: cats[i],
+                liveCount: _liveCounts[cats[i].id],
+                onTap: () => _openCategory(cats[i]),
+              ),
+              childCount: cats.length,
+            ),
           ),
         );
       },
@@ -714,25 +1112,74 @@ const _CatStyle _fallbackStyle = _CatStyle(Icons.category_rounded, AppColors.pri
 /// back to the website's own category image, then to the flat icon, so adding a
 /// new section never leaves a blank tile.
 const Set<String> _catArt = {
-  'property',
-  'cars-and-motors',
-  'electronics',
-  'house-and-diy',
-  'sports-and-hobbies',
-  'clothes-and-lifestyle',
-  'baby-and-kids',
   'animals',
-  'music-and-education',
-  'services',
-  'free-stuff',
-  'whats-on',
-  'weird-and-wonderful',
+  'baby-and-kids',
+  'bedding-and-feeding',
+  'boat-and-jet-skis',
+  'boat-extras',
   'business',
-  'farming',
-  'holidays-and-tickets',
-  'lost-and-found',
-  'jobs',
+  'campers',
+  'car-extras',
+  'car-parts',
+  'caravans',
+  'cars-and-motors',
+  'cars-for-breaking',
+  'cars-for-sale',
+  'clothes-and-lifestyle',
+  'coaches-and-buses',
+  'commercial',
+  'damaged-repairables',
+  'dhs-rentals',
+  'electric-cars',
+  'electronics',
   'everything',
+  'farm-machinery',
+  'farm-services',
+  'farm-sheds',
+  'farm-tools',
+  'farmers-market',
+  'farmers-noticeboard',
+  'farming',
+  'feeding-equipment',
+  'fencing-equipment',
+  'fertilizers',
+  'for-sale',
+  'free-stuff',
+  'holidays-and-tickets',
+  'house-and-diy',
+  'jobs',
+  'land-and-farms',
+  'livestock',
+  'lost-and-found',
+  'modified-cars',
+  'motorbike-extras',
+  'motorbikes',
+  'music-and-education',
+  'new-homes',
+  'other-farming',
+  'other-motors',
+  'parking',
+  'plant-machinery',
+  'poultry',
+  'property',
+  'quads',
+  'rally-cars',
+  'scooters',
+  'services',
+  'sharing',
+  'sold',
+  'sports-and-hobbies',
+  'to-rent',
+  'tractors',
+  'trailers',
+  'trucks',
+  'vans-and-commercials',
+  'vintage-bikes',
+  'vintage-cars',
+  'vintage-machinery',
+  'wanted',
+  'weird-and-wonderful',
+  'whats-on',
 };
 
 String? _catArtFor(String slug) =>
@@ -796,19 +1243,21 @@ class _Hero extends StatelessWidget {
   static const String _heroImage =
       'https://api.listit.im/assets/images/settings/1761592985344-cropped-image-opt.jpg';
 
-  /// Each section shows its own hero from the website's settings: the Property
-  /// tab gets the site's `property` banner, everything else the home banner.
+  /// Each section shows its own hero from the website's settings: Property gets
+  /// the site's `property` banner and Farming its `farming` one, everything else
+  /// the home banner.
   /// Changing them on the site changes them here too; we fall back to the
   /// last-known image if settings haven't loaded yet.
   Widget _heroBackground() {
     return ValueListenableBuilder<Map<String, String>>(
       valueListenable: SiteSettings.values,
       builder: (context, _, _) {
-        final url = tab == 2
-            ? (SiteSettings.propertyBanner ??
-                SiteSettings.homeBanner ??
-                _heroImage)
-            : (SiteSettings.homeBanner ?? _heroImage);
+        final sectionBanner = tab == 2
+            ? SiteSettings.propertyBanner
+            : tab == 3
+                ? SiteSettings.farmingBanner
+                : null;
+        final url = sectionBanner ?? SiteSettings.homeBanner ?? _heroImage;
         return Image.network(
           url,
           fit: BoxFit.cover,
@@ -820,41 +1269,55 @@ class _Hero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 86,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Brand colour sits underneath as the base / fallback.
-          const DecoratedBox(
-            decoration: BoxDecoration(color: AppColors.primaryDark),
-          ),
-          // The section-appropriate banner image.
-          Positioned.fill(child: _heroBackground()),
-          // A flat scrim for text contrast - no gradient theatrics, just
-          // enough to keep the tagline readable over any photo.
-          const Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(color: Color(0xB00B2430)),
-            ),
-          ),
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Text(
-                "The Isle of Man's place to buy & sell",
-                style: TextStyle(
-                  fontSize: 19,
-                  height: 1.2,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
+    // A backdrop, not a band: the block above decides how tall this is.
+    //
+    // The website's hero is navy first and photograph second - the banner is
+    // only visible where it bleeds in from the right-hand edge, behind the
+    // Search button. Anything more and the white fields stop reading.
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const DecoratedBox(decoration: BoxDecoration(color: AppColors.navy)),
+        // The section banner...
+        Positioned.fill(child: _heroBackground()),
+        // ...under a navy wash that is solid on the left and thins out to the
+        // right, so the photo only shows where the site's does.
+        //
+        // A gradient laid over the photo rather than a ShaderMask cut out of
+        // it: the mask renders as nothing at all on some web/Impeller
+        // back-ends, and a hero that silently loses its photograph is not worth
+        // the tidier code.
+        const Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  AppColors.navy,
+                  AppColors.navy,
+                  Color(0x8C132740),
+                ],
+                stops: [0.0, 0.38, 1.0],
               ),
             ),
           ),
-        ],
-      ),
+        ),
+        // A soft ring off the bottom-left corner, the same brand mark the site
+        // fades into its hero. Drawn last so the photo cannot cover it.
+        Positioned(
+          left: -70,
+          bottom: -90,
+          child: Container(
+            width: 230,
+            height: 230,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.primary.withValues(alpha: 0.10),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -880,13 +1343,13 @@ class _SwipeDeckMark extends StatelessWidget {
   }
 }
 
-/// A single marketplace section row, DoneDeal-style: a colourful rounded
-/// thumbnail, the section name, its live listing count, and a chevron.
-class _CategoryRow extends StatelessWidget {
+/// A marketplace section as the website draws it: a white card, the section's
+/// artwork filling the top of it, then the name and the live listing count.
+class _CategoryCard extends StatelessWidget {
   final Category category;
   final int? liveCount;
   final VoidCallback onTap;
-  const _CategoryRow({
+  const _CategoryCard({
     required this.category,
     required this.liveCount,
     required this.onTap,
@@ -898,69 +1361,74 @@ class _CategoryRow extends StatelessWidget {
     final art = _catArtFor(category.slug);
     final useImage =
         art == null && style == _fallbackStyle && category.imageUrl.isNotEmpty;
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: AppColors.line)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              // 46 rather than 40: the section art is a drawn object, and at
-              // 40 the detail turned to mush.
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                // Photographic section art sits straight on the row, with no
-                // tinted tile behind it. The tile stays behind the flat
-                // fallback icons, which need the backing to read.
-                color:
-                    art != null ? null : style.color.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(AppRadius.image),
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(AppRadius.card),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            border: Border.all(color: AppColors.line),
+          ),
+          padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
+          child: Column(
+            children: [
+              Expanded(
+                child: Center(
+                  child: art != null
+                      ? Image.asset(art, fit: BoxFit.contain)
+                      : useImage
+                          ? Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: NetworkPhoto(
+                                  url: category.imageUrl, fit: BoxFit.contain),
+                            )
+                          // Sections with no artwork keep the flat icon on its
+                          // tinted tile, so a new section is never a blank card.
+                          : Container(
+                              width: 62,
+                              height: 62,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: style.color.withValues(alpha: 0.10),
+                                borderRadius:
+                                    BorderRadius.circular(AppRadius.image),
+                              ),
+                              child: Icon(style.icon,
+                                  color: style.color, size: 30),
+                            ),
+                ),
               ),
-              alignment: Alignment.center,
-              clipBehavior: Clip.antiAlias,
-              child: art != null
-                  ? Image.asset(art, fit: BoxFit.contain)
-                  : useImage
-                      ? Padding(
-                          padding: const EdgeInsets.all(7),
-                          child: NetworkPhoto(
-                              url: category.imageUrl, fit: BoxFit.contain),
-                        )
-                      : Icon(style.icon, color: style.color, size: 23),
-            ),
-            const SizedBox(width: 12),
-            // Name on the left, count on the right - the classifieds layout,
-            // and it keeps every row to a single line.
-            Expanded(
-              child: Text(
+              const SizedBox(height: 8),
+              Text(
                 sectionLabel(category.name),
-                maxLines: 1,
+                textAlign: TextAlign.center,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: AppText.listing,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 15.5,
+                  height: 1.15,
+                  fontWeight: FontWeight.w700,
                   color: AppColors.ink,
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              liveCount != null
-                  ? '${_grouped(liveCount!)} ${liveCount == 1 ? 'ad' : 'ads'}'
-                  : '',
-              style: const TextStyle(
-                fontSize: AppText.meta,
-                color: AppColors.slate,
+              const SizedBox(height: 3),
+              // Blank until the live count lands, rather than a "0 ads" that
+              // would be wrong for the second it took to arrive.
+              Text(
+                liveCount != null
+                    ? '${_grouped(liveCount!)} ${liveCount == 1 ? 'ad' : 'ads'}'
+                    : '',
+                maxLines: 1,
+                style: const TextStyle(
+                  fontSize: AppText.meta,
+                  color: AppColors.slate,
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            const Icon(Icons.arrow_forward_ios,
-                size: 13, color: AppColors.muted),
-          ],
+            ],
+          ),
         ),
       ),
     );

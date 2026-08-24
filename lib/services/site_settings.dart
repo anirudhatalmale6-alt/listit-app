@@ -48,4 +48,10 @@ class SiteSettings {
     final raw = _get('property');
     return raw == null ? null : ApiConfig.resolveImage(raw);
   }
+
+  /// The Farming section banner (the website's own `farming` setting).
+  static String? get farmingBanner {
+    final raw = _get('farming');
+    return raw == null ? null : ApiConfig.resolveImage(raw);
+  }
 }
