@@ -1020,12 +1020,12 @@ class _BrowseScreenState extends State<BrowseScreen> {
   Widget _sectionLabel(String text) {
     if (text.isEmpty) return const SizedBox(height: 4);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 26, 24, 18),
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 14),
       child: Text(
         text,
         textAlign: TextAlign.center,
         style: const TextStyle(
-          fontSize: 25,
+          fontSize: 23,
           height: 1.22,
           fontWeight: FontWeight.w700,
           color: AppColors.ink,
@@ -1065,27 +1065,17 @@ class _BrowseScreenState extends State<BrowseScreen> {
           );
         }
         final cats = _visibleCats;
-        // Two to a row with the artwork on top, the way the website lays its
-        // categories out on a phone. `mainAxisExtent` rather than an aspect
-        // ratio: a fixed height cannot be overflowed by a long section name or
-        // a large system font the way a computed one can.
-        return SliverPadding(
-          padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-          sliver: SliverGrid(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              mainAxisSpacing: 14,
-              crossAxisSpacing: 14,
-              mainAxisExtent: 186,
+        // One section to a line, artwork on the left - DoneDeal's shape, which
+        // is what Chris asked for after seeing the two-up cards. A whole
+        // section fits on one screen this way; the cards showed four.
+        return SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, i) => _CategoryRow(
+              category: cats[i],
+              liveCount: _liveCounts[cats[i].id],
+              onTap: () => _openCategory(cats[i]),
             ),
-            delegate: SliverChildBuilderDelegate(
-              (context, i) => _CategoryCard(
-                category: cats[i],
-                liveCount: _liveCounts[cats[i].id],
-                onTap: () => _openCategory(cats[i]),
-              ),
-              childCount: cats.length,
-            ),
+            childCount: cats.length,
           ),
         );
       },
@@ -1343,13 +1333,13 @@ class _SwipeDeckMark extends StatelessWidget {
   }
 }
 
-/// A marketplace section as the website draws it: a white card, the section's
-/// artwork filling the top of it, then the name and the live listing count.
-class _CategoryCard extends StatelessWidget {
+/// A marketplace section on one line, DoneDeal's shape: the section's artwork
+/// on the left, the name, then its live listing count.
+class _CategoryRow extends StatelessWidget {
   final Category category;
   final int? liveCount;
   final VoidCallback onTap;
-  const _CategoryCard({
+  const _CategoryRow({
     required this.category,
     required this.liveCount,
     required this.onTap,
@@ -1363,33 +1353,35 @@ class _CategoryCard extends StatelessWidget {
         art == null && style == _fallbackStyle && category.imageUrl.isNotEmpty;
     return Material(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(AppRadius.card),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.card),
         child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppRadius.card),
-            border: Border.all(color: AppColors.line),
+          padding: const EdgeInsets.fromLTRB(16, 11, 16, 11),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppColors.line)),
           ),
-          padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
-          child: Column(
+          child: Row(
             children: [
-              Expanded(
+              SizedBox(
+                // The artwork is a drawn object rather than a flat glyph, so it
+                // gets a wide box - a van or a tractor needs the width more
+                // than an icon does, and at 46 the detail turned to mush.
+                width: art != null ? 66 : 46,
+                height: 52,
                 child: Center(
                   child: art != null
                       ? Image.asset(art, fit: BoxFit.contain)
                       : useImage
                           ? Padding(
-                              padding: const EdgeInsets.all(10),
+                              padding: const EdgeInsets.all(6),
                               child: NetworkPhoto(
                                   url: category.imageUrl, fit: BoxFit.contain),
                             )
                           // Sections with no artwork keep the flat icon on its
-                          // tinted tile, so a new section is never a blank card.
+                          // tinted tile, so a new one is never a blank line.
                           : Container(
-                              width: 62,
-                              height: 62,
+                              width: 46,
+                              height: 46,
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
                                 color: style.color.withValues(alpha: 0.10),
@@ -1397,24 +1389,26 @@ class _CategoryCard extends StatelessWidget {
                                     BorderRadius.circular(AppRadius.image),
                               ),
                               child: Icon(style.icon,
-                                  color: style.color, size: 30),
+                                  color: style.color, size: 23),
                             ),
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                sectionLabel(category.name),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 15.5,
-                  height: 1.15,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.ink,
+              const SizedBox(width: 14),
+              // Name on the left, count on the right - the classifieds layout,
+              // and it keeps every line to a single row.
+              Expanded(
+                child: Text(
+                  sectionLabel(category.name),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.ink,
+                  ),
                 ),
               ),
-              const SizedBox(height: 3),
+              const SizedBox(width: 8),
               // Blank until the live count lands, rather than a "0 ads" that
               // would be wrong for the second it took to arrive.
               Text(
