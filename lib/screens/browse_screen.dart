@@ -205,9 +205,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
     }
   }
 
-  /// The heading over the category grid - the website's wording, on every tab.
-  String get _sectionHeading => 'Explore Some Of Our Popular Categories';
-
   void _setTab(int i) {
     if (i == _tab) return;
     setState(() => _tab = i);
@@ -432,7 +429,11 @@ class _BrowseScreenState extends State<BrowseScreen> {
             // have, so it stays high on the page - but as a marketplace
             // feature, not a banner.
             SliverToBoxAdapter(child: _discoverBanner()),
-            SliverToBoxAdapter(child: _sectionLabel(_sectionHeading)),
+            // No heading over the sections. A centred "Explore Some Of Our
+            // Popular Categories" used to sit here, two lines deep, and it was
+            // the loudest thing on the page while saying nothing a buyer did
+            // not already know from the rows underneath it. Marketplaces that
+            // have been running for years put nothing there at all.
             _list(),
             SliverToBoxAdapter(child: _seeAll()),
             // The Featured Dealer banner sits further down the page, below the
@@ -591,13 +592,16 @@ class _BrowseScreenState extends State<BrowseScreen> {
               )
             else
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 18, 16, 22),
+                // Tight. The hero was taking better than a third of the screen
+                // before a single listing appeared; the fields themselves are
+                // unchanged, it is the air around them that came out.
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                 child: Column(
                   children: [
                     _searchBar(),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                     _locationBar(),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     _searchButton(),
                   ],
                 ),
@@ -983,11 +987,14 @@ class _BrowseScreenState extends State<BrowseScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Set exactly like "My Last Search" above it - same size,
+                  // same weight, same subtitle - so the three rows read as one
+                  // list rather than as three separately designed things.
                   const Text(
                     'Discover',
                     style: TextStyle(
-                      fontSize: AppText.listing,
-                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
                       color: AppColors.ink,
                     ),
                   ),
@@ -997,7 +1004,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: AppText.meta,
+                      fontSize: 14.5,
                       color: AppColors.slate,
                     ),
                   ),
@@ -1006,25 +1013,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
             ),
             const Icon(Icons.arrow_forward_ios, size: 14, color: AppColors.muted),
           ],
-        ),
-      ),
-    );
-  }
-
-  /// The heading over the category grid, centred and large, the way the
-  /// website sets it.
-  Widget _sectionLabel(String text) {
-    if (text.isEmpty) return const SizedBox(height: 4);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 22, 24, 14),
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-          fontSize: 23,
-          height: 1.22,
-          fontWeight: FontWeight.w700,
-          color: AppColors.ink,
         ),
       ),
     );
@@ -1273,6 +1261,13 @@ class _Hero extends StatelessWidget {
         // it: the mask renders as nothing at all on some web/Impeller
         // back-ends, and a hero that silently loses its photograph is not worth
         // the tidier code.
+        //
+        // The wash is heavy on purpose. At phone width the fields cover the
+        // left of the banner, so all the photo had left to show was a crop of
+        // whoever happens to be standing on the right of it - a face looming
+        // out from behind the search box, which reads as a mistake rather than
+        // as a photograph. Held down to a texture it does what the site's
+        // does: stops the navy being a flat slab.
         const Positioned.fill(
           child: DecoratedBox(
             decoration: BoxDecoration(
@@ -1282,24 +1277,10 @@ class _Hero extends StatelessWidget {
                 colors: [
                   AppColors.navy,
                   AppColors.navy,
-                  Color(0x8C132740),
+                  Color(0xE0132740),
                 ],
-                stops: [0.0, 0.38, 1.0],
+                stops: [0.0, 0.45, 1.0],
               ),
-            ),
-          ),
-        ),
-        // A soft ring off the bottom-left corner, the same brand mark the site
-        // fades into its hero. Drawn last so the photo cannot cover it.
-        Positioned(
-          left: -70,
-          bottom: -90,
-          child: Container(
-            width: 230,
-            height: 230,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.primary.withValues(alpha: 0.10),
             ),
           ),
         ),
@@ -1308,23 +1289,22 @@ class _Hero extends StatelessWidget {
   }
 }
 
-/// The Discover thumbnail - the same layered-cards mark the toolbar uses for
-/// the tab, sized and tinted like every other row thumbnail so the row sits in
-/// the rhythm of the list under it.
+/// The Discover mark - the same layered-cards glyph the toolbar uses for the
+/// tab, drawn bare.
+///
+/// It used to sit on a pale blue rounded tile. A glyph on a tinted rounded
+/// square is the house style of every app template going, and it put this row
+/// out of line with the two above it, which are a plain clock and a plain star.
+/// Three rows, three plain icons, one left edge.
 class _SwipeDeckMark extends StatelessWidget {
   const _SwipeDeckMark();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 40,
-      height: 40,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(AppRadius.image),
-      ),
-      child: const Icon(Icons.style_rounded, color: AppColors.primary, size: 21),
+    return const SizedBox(
+      width: 22,
+      height: 22,
+      child: Icon(Icons.style_rounded, color: AppColors.slate, size: 22),
     );
   }
 }
@@ -1397,9 +1377,13 @@ class _CategoryRow extends StatelessWidget {
                   sectionLabel(category.name),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  // Not bold. There are a dozen of these in a column, and when
+                  // every line is semibold none of them is emphasised - the
+                  // list just looks shouted. The rows above it are actions;
+                  // these are a menu.
                   style: const TextStyle(
                     fontSize: 17,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w500,
                     color: AppColors.ink,
                   ),
                 ),

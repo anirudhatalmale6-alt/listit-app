@@ -170,7 +170,7 @@ class _VehicleSearchPanelState extends State<VehicleSearchPanel> {
     final navy = widget.onNavy;
     // On the navy the fields are the hero, so they get the room the hero used
     // to give the keyword box; inside the white card they stay compact.
-    final gap = navy ? 12.0 : 8.0;
+    final gap = navy ? 10.0 : 8.0;
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -270,7 +270,7 @@ class _VehicleSearchPanelState extends State<VehicleSearchPanel> {
                 ),
               ],
             ),
-        SizedBox(height: navy ? 16 : 12),
+        SizedBox(height: navy ? 14 : 12),
         SizedBox(
           // Matches the hero's own Search button on the other two tabs, so
           // switching tabs doesn't make the button jump size.
@@ -303,8 +303,10 @@ class _VehicleSearchPanelState extends State<VehicleSearchPanel> {
     );
 
     if (navy) {
+      // Same rhythm as the hero on the other two tabs, so switching tabs does
+      // not change how much navy you are looking at.
       return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 22),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         child: body,
       );
     }
