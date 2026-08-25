@@ -75,7 +75,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     SwipeScreen(api: widget.api, auth: widget.auth), // Discover
     SellFlowScreen(api: widget.api, auth: widget.auth),
     MessagesScreen(api: widget.api, auth: widget.auth),
-    ProfileScreen(api: widget.api, auth: widget.auth),
+    ProfileScreen(
+        api: widget.api, auth: widget.auth, onPlaceAd: () => _select(2)),
   ];
 
   void _select(int i) {
