@@ -22,11 +22,22 @@ class VehicleSearchPanel extends StatefulWidget {
   /// The Cars For Sale category (a vehicle section) to search within.
   final Category carsCategory;
 
+  /// Draw straight onto the hero's navy instead of inside a white card: no
+  /// border, no title, white fields.
+  ///
+  /// This is how the Motors tab uses it. The tab used to carry a keyword box,
+  /// an area picker and a blue button, and then this panel with its own blue
+  /// button underneath - two search forms and two buttons before you reached
+  /// anything to look at. Cars are searched by make, year and price, so those
+  /// fields became the hero and the keyword box went to the header magnifier.
+  final bool onNavy;
+
   const VehicleSearchPanel({
     super.key,
     required this.api,
     required this.auth,
     required this.carsCategory,
+    this.onNavy = false,
   });
 
   @override
@@ -156,44 +167,41 @@ class _VehicleSearchPanelState extends State<VehicleSearchPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(AppRadius.card),
-          border: Border.all(color: AppColors.line),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.directions_car_rounded,
-                    color: AppColors.primary, size: 22),
-                const SizedBox(width: 8),
-                const Text(
-                  'Find your next car',
-                  style: TextStyle(
-                    fontSize: AppText.section,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.ink,
-                  ),
+    final navy = widget.onNavy;
+    // On the navy the fields are the hero, so they get the room the hero used
+    // to give the keyword box; inside the white card they stay compact.
+    final gap = navy ? 12.0 : 8.0;
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (!navy) ...[
+          Row(
+            children: [
+              const Icon(Icons.directions_car_rounded,
+                  color: AppColors.primary, size: 22),
+              const SizedBox(width: 8),
+              const Text(
+                'Find your next car',
+                style: TextStyle(
+                  fontSize: AppText.section,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.ink,
                 ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            // Make & model picker (full width).
-            _fieldButton(
-              label: _selectionSummary.isEmpty
-                  ? 'All makes & models'
-                  : _selectionSummary,
-              placeholder: _selectionSummary.isEmpty,
-              onTap: _pickMake,
-            ),
-            const SizedBox(height: 8),
-            Row(
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+        ],
+        // Make & model picker (full width).
+        _fieldButton(
+          label: _selectionSummary.isEmpty
+              ? 'All makes & models'
+              : _selectionSummary,
+          placeholder: _selectionSummary.isEmpty,
+          onTap: _pickMake,
+        ),
+        SizedBox(height: gap),
+        Row(
               children: [
                 Expanded(
                   child: _dropdown<int>(
@@ -232,8 +240,8 @@ class _VehicleSearchPanelState extends State<VehicleSearchPanel> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Row(
+        SizedBox(height: gap),
+        Row(
               children: [
                 Expanded(
                   child: _dropdown<int>(
@@ -262,35 +270,74 @@ class _VehicleSearchPanelState extends State<VehicleSearchPanel> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 46,
-              child: ElevatedButton.icon(
-                onPressed: _runSearch,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(AppRadius.control)),
-                ),
-                icon: const Icon(Icons.search_rounded, size: 19),
-                label: Text(
-                  _counting || _count == null
-                      ? 'Search cars'
-                      : 'Search ${_grouped(_count!)} ${_count == 1 ? 'car' : 'cars'}',
-                  style: const TextStyle(
-                      fontSize: AppText.listing, fontWeight: FontWeight.w600),
-                ),
+        SizedBox(height: navy ? 16 : 12),
+        SizedBox(
+          // Matches the hero's own Search button on the other two tabs, so
+          // switching tabs doesn't make the button jump size.
+          height: navy ? 54 : 46,
+          child: ElevatedButton.icon(
+            onPressed: _runSearch,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: navy ? AppColors.cta : AppColors.primary,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.control)),
+            ),
+            icon: Icon(Icons.search_rounded, size: navy ? 22 : 19),
+            label: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                _counting || _count == null
+                    ? 'Search Cars'
+                    : 'Search ${_grouped(_count!)} ${_count == 1 ? 'Car' : 'Cars'}',
+                maxLines: 1,
+                style: TextStyle(
+                    fontSize: navy ? 19 : AppText.listing,
+                    fontWeight: navy ? FontWeight.w700 : FontWeight.w600),
               ),
             ),
-          ],
+          ),
         ),
+      ],
+    );
+
+    if (navy) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 22),
+        child: body,
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: body,
       ),
     );
   }
 
   static String _money(int v) => '£${_grouped(v)}';
+
+  /// Hero fields are the size of the search box they replaced; card fields stay
+  /// as they were.
+  double get _fieldHeight => widget.onNavy ? 52 : 44;
+
+  double get _fieldTextSize => widget.onNavy ? 16 : AppText.body;
+
+  /// White with no hairline on the navy - the site's hero inputs have no
+  /// border, and a grey outline on white over navy reads as a mistake. Inside
+  /// the white card the fill and the hairline are what make it a field at all.
+  BoxDecoration get _fieldDecoration => BoxDecoration(
+        color: widget.onNavy ? Colors.white : AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.control),
+        border: widget.onNavy ? null : Border.all(color: AppColors.line),
+      );
 
   /// A tappable field that looks like the dropdowns but opens a picker sheet.
   Widget _fieldButton({
@@ -302,13 +349,9 @@ class _VehicleSearchPanelState extends State<VehicleSearchPanel> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(AppRadius.control),
       child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.control),
-          border: Border.all(color: AppColors.line),
-        ),
+        height: _fieldHeight,
+        padding: EdgeInsets.symmetric(horizontal: widget.onNavy ? 14 : 10),
+        decoration: _fieldDecoration,
         child: Row(
           children: [
             Expanded(
@@ -317,7 +360,7 @@ class _VehicleSearchPanelState extends State<VehicleSearchPanel> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: AppText.body,
+                  fontSize: _fieldTextSize,
                   color: placeholder ? AppColors.muted : AppColors.ink,
                   fontWeight: placeholder ? FontWeight.w400 : FontWeight.w600,
                 ),
@@ -339,24 +382,20 @@ class _VehicleSearchPanelState extends State<VehicleSearchPanel> {
     required ValueChanged<T?> onChanged,
   }) {
     return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.control),
-        border: Border.all(color: AppColors.line),
-      ),
+      height: _fieldHeight,
+      padding: EdgeInsets.symmetric(horizontal: widget.onNavy ? 14 : 10),
+      decoration: _fieldDecoration,
       child: DropdownButtonHideUnderline(
         child: DropdownButton<T>(
           value: value,
           isExpanded: true,
           hint: Text(hint,
-              style: const TextStyle(
-                  fontSize: AppText.body, color: AppColors.muted)),
+              style: TextStyle(
+                  fontSize: _fieldTextSize, color: AppColors.muted)),
           icon: const Icon(Icons.keyboard_arrow_down_rounded,
               color: AppColors.slate),
-          style: const TextStyle(
-              fontSize: AppText.body,
+          style: TextStyle(
+              fontSize: _fieldTextSize,
               color: AppColors.ink,
               fontWeight: FontWeight.w600),
           items: [

@@ -427,9 +427,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
             // The section switch, the search box, the area and the blue
             // Search button, all on the navy - the website's hero.
             SliverToBoxAdapter(child: _heroBlock()),
-            // The car-search block leads the Motor Mall tab, sitting right
-            // under the search so its Search button is easy to reach.
-            SliverToBoxAdapter(child: _vehicleSearchPanel()),
             SliverToBoxAdapter(child: _searchShortcuts()),
             // Discover is the one thing the island's other marketplaces don't
             // have, so it stays high on the page - but as a marketplace
@@ -580,18 +577,31 @@ class _BrowseScreenState extends State<BrowseScreen> {
         Column(
           children: [
             _sectionTabs(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 22),
-              child: Column(
-                children: [
-                  _searchBar(),
-                  const SizedBox(height: 12),
-                  _locationBar(),
-                  const SizedBox(height: 16),
-                  _searchButton(),
-                ],
+            // Motors searches by make, year and price - the fields a car buyer
+            // actually uses - so on that tab they ARE the hero. The other two
+            // tabs keep the keyword box and the area picker, which is how the
+            // website and DoneDeal both split it.
+            if (_tab == 0 && _catById(_carsForSaleCatId) != null)
+              VehicleSearchPanel(
+                key: const ValueKey('car-search-hero'),
+                api: widget.api,
+                auth: widget.auth,
+                carsCategory: _catById(_carsForSaleCatId)!,
+                onNavy: true,
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 18, 16, 22),
+                child: Column(
+                  children: [
+                    _searchBar(),
+                    const SizedBox(height: 12),
+                    _locationBar(),
+                    const SizedBox(height: 16),
+                    _searchButton(),
+                  ],
+                ),
               ),
-            ),
           ],
         ),
       ],
@@ -854,20 +864,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
           ),
         ))
         .then((_) => _loadShortcuts());
-  }
-
-  /// The DoneDeal-style car-search block - only on the Cars & Motors tab, and
-  /// only once the Cars For Sale section has loaded so it can run the search.
-  Widget _vehicleSearchPanel() {
-    if (_tab != 0) return const SizedBox.shrink();
-    final cars = _catById(_carsForSaleCatId);
-    if (cars == null) return const SizedBox.shrink();
-    return VehicleSearchPanel(
-      key: const ValueKey('car-search'),
-      api: widget.api,
-      auth: widget.auth,
-      carsCategory: cars,
-    );
   }
 
   /// A single Featured Dealer banner (rotating hourly) on the Cars & Motors and
